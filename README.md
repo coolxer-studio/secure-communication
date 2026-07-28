@@ -1,257 +1,339 @@
-# 端到端通信协议保护SDK
+# Secure Communication
+
+一个用于验证“客户端封装请求、服务端透明解包与回包”的跨端 HTTP 通信保护原型。仓库包含 Android、iOS、JavaScript 和 Spring Boot 四部分，当前实现覆盖 URI 变换、SM4 请求/响应 Body 加解密、应用标识校验，以及备用和 H5 两种兼容通道。
+
+> [!WARNING]
+> 本项目目前是实验性原型，不是可直接用于生产的安全 SDK。代码中存在硬编码服务地址、固定密钥、明文 HTTP、无消息认证等问题；备用通道仅做 Base64 变换，不提供加密保护。请先阅读[安全边界与已知问题](#安全边界与已知问题)。
+
+## 当前实现
+
+| 组件 | 技术栈 | 当前能力 | 状态 |
+| --- | --- | --- | --- |
+| Spring Boot Starter | Java 17、Spring Boot 3.0.2、Jakarta Servlet | Filter 自动解包/回包、三种通道路由、应用标识白名单、URI 去重队列 | 可编译，单元测试有 1 个已知错误 |
+| Spring Boot Demo | Java 17、Spring Boot 3.0.2 | 示例 Controller 和 Starter 集成 | 上下文测试通过 |
+| Android SDK | Java、JNI、C/C++、SM4 | `get` / `post` API、标准通道、备用通道、应用包名与签名标识 | 源码原型，无已发布 AAR |
+| Android Demo | Android App | SDK 调用示例 | 需要先修改服务地址 |
+| iOS SDK | Objective-C、C、SM4 | `get` / `post` API、标准通道代码、备用通道 | 当前逻辑被硬编码为始终使用备用通道 |
+| iOS Demo | Objective-C App | SDK 调用示例 | 需要先修改服务地址 |
+| JavaScript SDK | JavaScript、SM4-CBC、MD5 | H5 通道请求封装、响应解封、本地文本加解密，提供 CJS/ESM/UMD | 可独立构建和测试，尚未发布 npm |
+
+当前代码**没有实现**安全握手、密钥协商、签名/HMAC、可靠的时间戳或 nonce 防重放、AES/SM2/SM3/SHA256、TCP/UDP/WebSocket 适配、策略热更新、安全监控或集群会话同步。
+
+## 工作方式
+
+```mermaid
+flowchart LR
+    A["Android / iOS / JavaScript 业务代码"] --> B["客户端 SDK<br/>封装 URI、Header、Body"]
+    B --> C["HTTP /sc/**"]
+    C --> D["ScServiceFilter<br/>识别通道并还原请求"]
+    D --> E["原有 Spring MVC Controller"]
+    E --> F["ScServiceFilter<br/>捕获并转换响应"]
+    F --> G["客户端 SDK<br/>还原响应 Body"]
+    G --> A
+```
+
+服务端 Starter 注册 `ScServiceFilter`，只处理以 `spring.sc.prefix` 开头的请求；其他请求原样进入应用。Filter 通过 `HttpServletRequestWrapper` 替换业务 URI、查询参数和 Body，再通过 `HttpServletResponseWrapper` 捕获 Controller 响应并编码。
+
+### 三种通道
+
+| 通道 | 外部路径 | URI 处理 | Body/响应处理 | 标识校验 | URI 去重 |
+| --- | --- | --- | --- | --- | --- |
+| 标准通道 | `/sc/{混合后的密钥与密文}` | 随机 16 字节小写密钥 + SM4-ECB + Base32，再将密钥字符混入密文 | 固定密钥与 IV 的 SM4-CBC + Base64 | 支持 | 支持，但实现有局限 |
+| 备用通道 | `/sc/reserve/{变换后的URI}` | 随机数字前缀 + Base64 + 大小写反转 + URL 字符替换 | Base64 + 大小写反转 | 不支持 | 不支持 |
+| H5 通道 | `/sc/h5/{业务路径}` | 路径不加密，仅移除通道前缀 | 动态派生密钥的 SM4-CBC + Hex | 不支持 | 不支持 |
 
-> 本产品不是单点加密工具，而是**一套完整的、端到端、标准化、可复用的通信协议安全防护底座**，通过SDK封装方式，低成本、零侵入解决现有通信协议裸奔、易破解、易攻击、防护不统一、维护成本高的行业痛点。
+备用通道中的字符替换规则为 `+ → !`、`/ → @`、`= → *`。这是一种编码/混淆方式，不是加密。
 
-## 一、当前现状
-目前各类客户端与服务端的业务通信（私有TCP/UDP/HTTP等）普遍采用原生裸协议或简单加密传输模式，整体通信体系存在**轻量化安全能力缺失、无统一防护标准、两端防护割裂**的现状：
+H5 请求 Body 的格式是：
 
-1. 业务通信协议多为明文传输或简易加密，协议特征固定、报文格式公开，极易被网络抓包工具识别、解析协议逻辑。
-2. 客户端、服务端安全防护逻辑独立开发，无统一标准，不同业务、不同版本防护能力参差不齐，维护成本极高。
-3. 现有防护多为零散单点能力（仅简单加密、简单验签），**无全链路、体系化的协议防护能力**，无法对抗篡改、重放、协议探测、流量分析等复合型攻击。
-4. 业务迭代优先保障功能落地，通信安全开发投入少、改造难、侵入业务代码深，存量系统几乎无标准化协议防护手段。
+```text
+Hex(SM4-CBC(明文, key, iv)) + acceptHex
+```
 
-## 二、面临的核心痛点问题
-### 1. 协议透明可探测，通信极易被逆向分析
-原生通信协议包头固定、字段固定、流量特征稳定，攻击者可通过抓包快速梳理通信逻辑、业务字段、交互流程，存在协议被彻底破解、业务逻辑暴露的风险。
+其中 `acceptHex` 固定占最后 32 个字符：
 
-### 2. 报文易篡改、易重放，数据可信度无法保障
-现有通信缺乏标准化防篡改、防重放机制，传输报文可被中间人随意修改、重复投递，导致服务端产生异常业务逻辑、数据错乱、恶意请求触发风险。
+```text
+md5 = MD5(lowercase(acceptHex) + "_bsdk_")
+key = md5[0..15]
+iv  = key
+```
 
-### 3. 客户端与服务端防护割裂，不成体系
-传统模式下客户端防护、服务端校验分开开发，算法、校验规则、协议规则不统一，极易出现**一端防护、一端裸奔**的漏洞，整体通信链路存在安全短板。
+响应使用同一组 `key` 和 `iv` 做 SM4-CBC，再编码为 Hex。
 
-### 4. 安全开发成本高、业务侵入性强
-若业务自行开发全套加密、验签、防重放、协议混淆逻辑，需要大量重复编码，且深度耦合业务代码，后续安全策略升级、漏洞修复需要全业务迭代，维护成本极高。
+### 标准通道请求流程
 
-### 5. 无统一安全管控与可观测能力
-通信异常、攻击行为、非法报文、破解尝试无法统一记录与识别，缺乏全链路的安全监测、拦截、日志追溯能力。
+1. 客户端可在原始业务 URI 前拼接应用标识和 `->`。
+   - Android 标识：`MD5(应用签名证书)-包名`
+   - iOS 标准通道标识：`Bundle Seed ID-Bundle ID`
+2. 客户端生成 16 字节小写 URI 密钥，用 SM4-ECB 加密完整 URI并转为 Base32。
+3. 客户端将小写密钥字符随机混入只含大写字母和数字的 Base32 密文。
+4. 服务端按字符大小写重新分离密钥与密文，解出真实 URI 和查询参数。
+5. 服务端按配置校验应用标识；未配置白名单时，只移除客户端附带的标识。
+6. 请求 Body 使用 SM4-CBC 加密并转为 Base64；响应执行相反流程。
 
-## 三、核心解决思路
-核心思想：**一套SDK、两端集成、全链路防护、业务零侵入**。
+Android 和 iOS 的标准通道还会附加 `scid: debug` 请求头。
 
-1. **统一两端安全标准**
-提供**客户端SDK + 服务端SDK**成对组件，两端采用完全统一的加密规则、校验规则、协议变形规则、会话安全机制，实现客户端-服务端全链路闭环防护，消除防护割裂问题。
+## 仓库结构
 
-2. **封装全套协议安全能力，开箱即用**
-将加密解密、签名验签、防重放、协议混淆、流量伪装、会话鉴权、异常拦截等复杂安全逻辑全部内置在SDK内核，业务层无需关心任何安全细节。
+```text
+.
+├── README.md
+├── LICENSE
+├── client/
+│   ├── android/
+│   │   ├── app/                         # Android 示例 App
+│   │   └── secure-communication/        # Android Library、JNI 和 C 实现
+│   ├── javascript/                      # H5 JavaScript SDK、构建产物和协议测试
+│   └── ios/
+│       ├── secure-communication-ios/    # iOS 示例 App
+│       ├── secure-communication/        # Objective-C/C SDK 源码
+│       └── secure-communication-ios.xcodeproj
+└── server/
+    └── spring-boot/
+        ├── spring-boot-starter-sc/      # 自动配置、Filter、SM4/Base32/Base64
+        └── SpringBootDemo/              # 服务端示例
+```
 
-3. **业务极低侵入、快速接入**
-原有业务通信逻辑无需重构，仅替换原生收发接口为SDK标准接口，即可一键启用全维度协议防护，大幅降低安全改造成本。
+关键入口：
 
-4. **动态协议变形，消灭固定协议指纹**
-通过动态包头、动态字段排序、字节混淆、随机编码变形，彻底消除固定协议特征，使流量无法被识别、归类、逆向解析。
+- Android API：[`CTSecureCommunication.java`](client/android/secure-communication/src/main/java/com/coolxer/securecommunication/CTSecureCommunication.java)
+- Android JNI：[`secure-communication.cpp`](client/android/secure-communication/src/main/cpp/secure-communication.cpp)
+- iOS API：[`CTSecureCommunication.h`](client/ios/secure-communication/CTSecureCommunication.h)
+- iOS 实现：[`CTSecureCommunication.m`](client/ios/secure-communication/CTSecureCommunication.m)
+- JavaScript API：[`index.js`](client/javascript/src/index.js)
+- JavaScript 使用说明：[`client/javascript/README.md`](client/javascript/README.md)
+- 服务端 Filter：[`ScServiceFilter.java`](server/spring-boot/spring-boot-starter-sc/src/main/java/com/abc/sc/ScServiceFilter.java)
+- 服务端配置：[`ScServiceProperties.java`](server/spring-boot/spring-boot-starter-sc/src/main/java/com/abc/sc/ScServiceProperties.java)
+- Demo Controller：[`MessageController.java`](server/spring-boot/SpringBootDemo/src/main/java/com/abc/demo/controller/MessageController.java)
 
-5. **全链路可信校验，杜绝恶意攻击**
-建立「握手鉴权+签名防篡改+时间戳+流水号+随机因子」多重校验体系，拦截篡改包、过期包、重复包、伪造包。
+## 快速开始
 
-6. **安全能力可配置、可迭代**
-SDK内置防护策略配置层，支持防护等级开关、算法策略更新、拦截策略调整，支持后续能力平滑升级，无需改动业务代码。
+### 环境要求
 
-## 四、预期实现效果
-1. **通信协议完全隐蔽**
-网络层无法抓包解析协议结构、无法识别业务字段、无法定位通信协议类型，彻底规避协议逆向与流量分析。
+| 组件 | 建议环境 |
+| --- | --- |
+| Spring Boot | JDK 17、Maven 3 |
+| Android | Android Studio、JDK 11、Android SDK 32、NDK、CMake 3.10.2 |
+| iOS | 完整版 Xcode；工程目标最低版本为 iOS 10.0 |
+| JavaScript | Node.js 18+、npm；消费端可使用 Yarn 1 |
 
-2. **传输数据全程可信加密**
-全链路密文传输，支持国密/国际双算法体系，报文篡改、伪造、替换全部可被精准识别并拦截。
+Spring Boot Starter 使用 Lombok 1.18.22。请使用 JDK 17 构建；在较新的 JDK（例如 JDK 26）上，旧版 Lombok 注解处理可能无法正常工作。
 
-3. **彻底抵御主流网络攻击**
-有效防御抓包分析、中间人篡改、重放攻击、协议扫描、端口探测、恶意伪造请求等常见攻击手段。
+### 1. 对齐服务地址与协议参数
 
-4. **大幅降低业务安全开发成本**
-业务无需自研任何通信安全逻辑，接入即拥有企业级协议防护能力，开发效率提升90%以上。
+仓库当前的默认值彼此不一致，不能直接完成端到端联调：
 
-5. **统一标准化、可落地、可复用**
-形成通用、跨业务、跨场景的**标准化通信安全底座**，可在所有自研客户端、服务端项目中批量复用。
+- Android 服务地址：`http://192.168.1.12:11099`
+- iOS 服务地址：`http://39.106.54.18:11099`
+- Spring Boot Demo 端口：`6789`
+- 三端默认路径前缀：`/sc/`
 
-6. **具备安全可观测性**
-全链路记录握手、收发、校验失败、攻击拦截、异常会话日志，支持安全追溯、风险告警、问题定位。
+联调前至少要修改：
 
-## 五、整体技术架构（四层架构、端到端双端模型）
-整体架构分为 **SDK对外接口层、安全策略编排层、协议防护内核层、底层网络适配层**，同时分为**客户端侧、服务端侧**双端对等架构。
+- Android 的 `HOST_PORT`：[`secure-communication.cpp`](client/android/secure-communication/src/main/cpp/secure-communication.cpp)
+- iOS 的 `host`：[`CTSecureCommunication.m`](client/ios/secure-communication/CTSecureCommunication.m)
+- 服务端的 `server.port` 和 `spring.sc.*`：[`application.properties`](server/spring-boot/SpringBootDemo/src/main/resources/application.properties)
 
-### 1. 对外极简接口层（业务接入层）
-提供统一极简API，屏蔽所有底层复杂逻辑
-- SDK初始化、安全通道建立
-- 安全发包、安全收包、报文回包
-- 防护等级配置、日志配置、策略开关
-**特点：业务零感知、零复杂度、极简集成**
+标准通道还必须保证客户端 `STDKEY`、`STDIV` 与服务端 `spring.sc.encryption.key`、`spring.sc.encryption.iv` 完全一致。当前默认值只是源码中的演示值，部署前必须替换，并且不应继续硬编码在客户端。
 
-### 2. 安全策略编排层（能力管理层）
-统一管理所有安全防护策略
-- 加密算法策略（SM4/AES动态切换）
-- 签名校验策略（SM3/SHA256）
-- 防重放时效、流水号规则
-- 协议混淆强度、流量伪装规则
-- 异常拦截、限流、断连策略
-
-### 3. 核心防护内核层（SDK核心）
-实现所有端到端安全能力，为整个SDK核心
-- 安全握手与会话密钥协商
-- 报文加密、解密内核
-- 报文签名、完整性校验内核
-- 防重放、防伪造校验引擎
-- 动态协议变形、流量混淆引擎
-- 攻击识别、异常过滤、非法报文熔断
-
-### 4. 底层网络适配层
-兼容各类原生通信协议，适配现有业务网络模型
-- TCP/UDP私有协议适配
-- HTTP/HTTPS/WebSocket通用协议适配
-- 跨平台网络IO、会话管理、连接维护
-
-### 双端架构协作模式
-![alt text](image.png)
-1. **客户端SDK**：负责报文加密、协议伪装、安全出站、会话发起
-2. **服务端SDK**：负责报文校验、非法拦截、解密还原、攻击统计、会话管理
-3. **两端内核规则完全对齐**，形成闭环可信安全通信链路
-
-## 六、核心功能模块详解
-
-### . 安全通道
-安全通道确保了客户端SDK和服务端SDK之间的通信是加密的，防止数据在传输过程中被截获或篡改。这通常通过以下方式实现：
-
-1. **接口绑定**：客户端和服务器端通过接口映射表进行绑定，确保只有授权的接口可以被访问。
-   - 建立接口白名单机制，仅允许已登记的接口进行通信
-   - 接口调用权限分级管理，按业务域划分访问范围
-   - 实时维护接口映射关系，支持动态更新与版本控制
-
-2. **应用绑定**：应用信息表中的信息用于验证客户端和服务器端的身份，确保通信双方的合法性。
-   - 客户端/服务端双向证书认证机制
-   - 应用身份标识签名验证，防止伪造应用接入
-   - 多应用场景下的隔离与鉴权管理
-
-3. **应用校验**：在服务端进行应用级别的校验，进一步确保请求的合法性。
-   - 请求来源合法性检测与过滤
-   - 应用状态监控与异常告警
-   - 访问频次限制与流量控制
-
-### .2 数据加密
-数据加密是保护数据不被未授权访问的关键技术。在端到端通信中，数据加密可以通过以下方式实现：
-
-1. **密钥协商算法**：客户端和服务器端通过密钥协商算法生成共享密钥，用于加密和解密数据。
-   - 支持国密SM2/ECDH等密钥协商协议
-   - 每次会话独立生成临时会话密钥，防止密钥泄露风险
-   - 前向安全性保障，即使长期密钥泄露不影响历史会话安全
-
-2. **通信接口标记**：在通信过程中，对接口进行标记，确保只有通过验证的接口才能进行数据传输。
-   - 接口调用链路追踪与标记
-   - 端到端通信完整性校验
-   - 动态密钥刷新与重同步机制
-
-3. **通信地址混淆**：通过混淆技术隐藏真实的通信地址，增加攻击者截获数据的难度。
-   - 真实通信地址隐藏与伪装
-   - 多跳转发与动态路由机制
-   - 流量特征随机化处理
-
-### .3 环境校验
-环境校验用于确保客户端和服务器端的运行环境是安全的，防止在不安全的环境中运行导致的数据泄露。这包括：
-
-1. **静态参数约定**：在客户端和服务器端之间约定一些静态参数，如密钥协商算法、通信接口标记等，用于校验通信环境的一致性，防止恶意调用。
-   - 预共享密钥(PSK)校验机制
-   - 协议版本一致性验证
-   - 环境指纹采集与比对
-
-2. **幂等性校验**：确保请求可以被重复执行而不会改变结果，防止重放攻击。
-   - 基于时间戳的请求时效性验证
-   - 流水号序列号唯一性校验
-   - 请求nonce随机数防重放机制
+Demo 默认配置了应用标识白名单。若只是本地验证，可先删除或清空 `spring.sc.identify`；否则需要把实际 Android/iOS 标识加入白名单。
 
-## 七、产品版本规划
+### 2. 构建并启动 Spring Boot Demo
 
-整体遵循演进路径：**基础可用 → 安全闭环 → 高级抗破解 → 企业级成熟商用**
+先将 Starter 安装到本地 Maven 仓库：
 
-| 版本 | 定位 | 核心能力 |
-|------|------|----------|
-| V1.0 | 基础闭环版 | 打通双端基础加密通信，业务可快速接入（能用） |
-| V1.5 | 安全加固版 | 补齐防篡改、防重放、校验体系（安全） |
-| V2.0 | 高级抗破解版 | 动态协议混淆、流量伪装、抗抓包抗逆向（难破） |
-| V3.0 | 企业成熟版 | 管控、监控、策略热更新、高可用集群（商用成熟） |
+```bash
+cd server/spring-boot/spring-boot-starter-sc
+mvn clean install -DskipTests
+```
 
-### 1. V1.0 版本【基础闭环版｜最小可用版本】
-**版本定位**：实现双端统一加密通信，完成产品从0到1，可接入业务试运行。
+然后启动 Demo：
 
-**核心解决问题**：解决原始报文明文传输、无加密、无防护的基础问题。
+```bash
+cd ../SpringBootDemo
+mvn spring-boot:run
+```
 
-**实现功能**：
-- **服务端SDK核心架构**：支持常见技术架构，服务端Spring Boot、客户端Android/iOS/Web
-- **SM4国密算法支持**：支持ECB/CBC两种加密模式，支持自定义密钥和初始向量（IV），实现请求Body和响应Body的自动加解密
-- **多种编码支持**：Base64/Base32/Hex十六进制编码/解码
-- **URL混淆与解密**：动态密钥提取、URI参数解密、URL参数解析
-- **防重放攻击机制**：基于ConcurrentLinkedQueue实现URI队列、重复请求检测、可配置队列大小（默认1000）、延时处理机制
-- **应用标识校验**：应用标识白名单、标识提取与验证、多应用隔离
-- **多通道支持**：标准安全通道（SM4加密）、H5定制通道（JS SM4+MD5动态密钥）、备用通道（Base64兼容）
-- **日志与调试**：DEBUG级别日志输出、加解密过程追踪、异常日志记录
+Demo 默认监听 `http://localhost:6789`。业务 Controller 示例路径包括：
 
-**版本交付效果**：
-- 服务端SDK完整可用，支持Spring Boot项目快速集成
-- 实现全链路SM4加密传输，解决明文裸奔问题
-- 支持防重放攻击，提升通信安全性
-- 支持应用标识校验，实现多应用隔离
-- 提供多种通道模式，满足不同客户端需求
-- SDK架构定型，后续版本可无缝叠加功能
+- `/1/1`、`/1/2`
+- `/1/a`、`/1/b`
+- `/1/ping`
+- `/v1/1`、`/v1/2`
+- `/v1/a`、`/v1/b`
+- `/v1/ping`
 
-**技术实现亮点**：
-- 基于Servlet Filter实现业务零侵入
-- 支持国密SM4算法，符合国内安全合规要求
-- 多通道设计，灵活适配不同客户端场景
-- 配置化管理，无需修改代码即可调整安全策略
+客户端传入的是上述原始业务路径；SDK 会在发出请求时添加 `/sc/` 并转换 URI。
 
-**不包含功能**：无客户端SDK、无防篡改签名、无复杂协议混淆、无动态变形、无后台管控
+在其他 Spring Boot 3 项目中使用：
 
-### 2. V1.5 版本【安全加固版｜生产可用安全版本】
-**版本定位**：补齐安全短板，达到生产环境安全标准。
+```xml
+<dependency>
+    <groupId>com.abc</groupId>
+    <artifactId>spring-boot-starter-sc</artifactId>
+    <version>1.1.0</version>
+</dependency>
+```
 
-**核心解决问题**：解决报文篡改、伪造、重放攻击、数据不可信问题。
+该依赖目前没有配置远程制品仓库，需要先本地安装或自行发布。
 
-**新增功能**：
-- **防篡改体系**：SM3/SHA256全局报文签名校验，报文完整性校验，篡改直接丢弃
-- **防重放攻击体系**：时间戳校验机制，全局自增序列号防重复投递
-- **报文合法性校验**：非法包、残缺包、伪造包头拦截
-- **安全握手鉴权**：双端身份合法性校验，非法客户端直接拒绝连接
-- **基础风控拦截**：高频异常请求拦截、基础限流
+### 3. Android
 
-**版本交付效果**：
-- 具备**企业基础通信安全防御能力**
-- 可抵御90%常规网络攻击（抓包、篡改、重放、伪造）
-- 稳定可用于正式业务环境
+用 Android Studio 打开 `client/android/`，安装对应的 SDK、NDK 和 CMake 后同步 Gradle。工程包含：
 
-### 3. V2.0 版本【高级抗破解版｜核心竞争力版本】
-**版本定位**：产品核心亮点版本，防协议分析、防抓包、防逆向、防特征扫描。
+- `:secure-communication`：Android Library
+- `:app`：调用示例
 
-**核心解决问题**：解决协议特征固定、流量特征明显、容易被逆向分析、被协议识别的致命问题。
+修改 `HOST_PORT` 后，可运行 Demo，或构建 Library：
 
-**新增核心功能（产品亮点）**：
-- **动态协议变形引擎（核心专利级能力）**：包头结构动态随机变化，报文字段顺序动态打乱，报文填充随机冗余字节，无固定协议指纹，无法被特征库识别
-- **流量混淆与伪装**：报文字节动态偏移编码，伪装成普通心跳/通用流量，规避流量分析、协议探测、端口扫描
-- **动态会话密钥轮换**：通信中自动轮换会话密钥，长期链路无法通过抓包累积破解
-- **数据包碎片化处理**：单包拆分乱序发送、重组校验
-- **SDK自身防逆向保护**：代码混淆、反调试、关键逻辑内存保护
+```bash
+cd client/android
+./gradlew :secure-communication:assembleDebug
+```
 
-**版本交付效果**：
-- **外人抓包看不懂、分析不出、识别不了、破解不动**
-- 与市面上普通加密SDK形成代差优势
-- 适用于游戏、工控、物联网、高保密私有协议场景
+Java API：
 
-### 4. V3.0 版本【企业成熟版｜商业化完整版】
-**版本定位**：可大规模商业化、可运维、可管控、可观测的正式产品。
+```java
+String getResult = CTSecureCommunication.get(
+    "/1/a?name=demo",
+    "Content-Type:application/json\r\n"
+);
 
-**核心解决问题**：解决大规模部署、集群适配、运维难、策略固化、无监控的问题。
+String postResult = CTSecureCommunication.post(
+    "/1/1",
+    "Content-Type:application/json\r\n",
+    "{\"message\":\"hello\"}"
+);
+```
 
-**新增功能**：
-- **安全策略热更新**：不升级SDK，动态更新防护策略，可配置加密强度、混淆强度、拦截规则
-- **集群服务端适配**：多节点会话同步、密钥同步，分布式环境一致性防护
-- **完整安全监控与告警**：攻击统计、爆破统计、异常连接统计，后台可视化日志、风险告警
-- **黑白名单、设备级授信管控**
-- **多平台完整适配**：Windows/Linux/Android/iOS/ARM全平台稳定版
-- **异常智能熔断**：智能识别攻击行为、自动封禁、隔离风险
+调用会执行同步网络请求，必须放在工作线程，不能在 Android 主线程执行。宿主 App 还需要声明 `android.permission.INTERNET`。仓库未包含预构建 AAR。
 
-**版本交付效果**：
-- **完整商业化级别的协议安全防护产品**
-- 支持大型项目、集群项目、海量终端接入
-- 具备运维、运营、监控、风控全套能力
+### 4. iOS
 
+用 Xcode 打开：
 
+```text
+client/ios/secure-communication-ios.xcodeproj
+```
 
+工程包含 `secure-communication-ios` Demo App target 和 `secure-communication` framework target。修改 `CTSecureCommunication.m` 中的 `host` 后即可从 Objective-C 调用：
 
+```objective-c
+#import "CTSecureCommunication.h"
 
+NSString *result = [CTSecureCommunication post:@"/1/1"
+                                    withHeader:@"Content-Type:application/json\r\n"
+                                       withBody:@"{\"message\":\"hello\"}"];
+```
 
+当前仓库没有预构建 `.framework` / `.xcframework`，也没有旧版 iOS 文档中提到的 `build.sh`。需要使用 Xcode 从源码构建或自行补充发布脚本。
+
+另外，当前 `CTSecureCommunication.m` 中存在：
+
+```objective-c
+} else if (YES || [CommonUtils reserveTimes] > 0) {
+```
+
+因此所有正常调用都会进入备用通道，标准 SM4 通道代码不会被执行。若要测试标准通道，需要先修正这段分支逻辑。
+
+### 5. JavaScript H5 SDK
+
+SDK 位于 `client/javascript/`，只负责 H5 协议编解码，不接管 `fetch` 或 `XMLHttpRequest`：
+
+```bash
+cd client/javascript
+npm install
+npm test
+```
+
+模块调用：
+
+```javascript
+import { createH5Codec } from '@coolxer/secure-communication-js';
+
+const codec = createH5Codec('1596861234c4ea6ddd041d45b3912345');
+const requestBody = codec.encodeRequest(JSON.stringify({ message: 'hello' }));
+
+// POST requestBody 到 /sc/h5/**，收到非空 Hex 响应后：
+const response = JSON.parse(codec.decodeResponse(responseCipherHex));
+```
+
+`appId` 必须是 32 个字符。`encodeRequest` 会完成密钥派生、UTF-8、SM4-CBC、PKCS#7、Hex 编码和 appId 后缀拼接；`encrypt` / `decrypt` 则只处理密文，可供本地数据使用。
+
+当前包名为 `@coolxer/secure-communication-js`，版本 `0.1.0`，尚未发布到 npm。相邻项目可以使用：
+
+```json
+"@coolxer/secure-communication-js": "file:../../../secure-communication/client/javascript"
+```
+
+完整接口和协议约束见 [`client/javascript/README.md`](client/javascript/README.md)。
+
+## 服务端配置
+
+以下属性来自 `ScServiceProperties`。Spring Boot 支持 properties、YAML 以及 relaxed binding 命名。
+
+| 配置项 | 默认值 | 当前是否生效 | 说明 |
+| --- | --- | --- | --- |
+| `spring.sc.enabled` | `false` | 否 | 字段存在，但 Filter 和自动配置没有读取它 |
+| `spring.sc.prefix` | `/sc` | 是 | 受保护请求前缀 |
+| `spring.sc.reserve-prefix` | `/reserve/` | 是 | 备用通道子路径 |
+| `spring.sc.h5-prefix` | `/h5/` | 是 | H5 通道子路径 |
+| `spring.sc.repeat-queue-size` | `1000` | 是 | `0` 表示关闭标准通道 URI 去重 |
+| `spring.sc.identify` | 空集合 | 是 | 逗号分隔的应用标识白名单 |
+| `spring.sc.encryption.enabled` | `false` | 否 | 字段存在，但标准通道始终执行 Body 加解密 |
+| `spring.sc.encryption.algorithm` | `sm4` | 否 | 字段存在，但实现固定使用 SM4 |
+| `spring.sc.encryption.mode` | `CBC` | 是 | 精确等于 `CBC` 时用 CBC，其他值进入 ECB 分支 |
+| `spring.sc.encryption.key` | 源码演示值 | 是 | SM4 密钥，应为 16 字节 |
+| `spring.sc.encryption.iv` | 源码演示值 | CBC 时生效 | SM4 IV，应为 16 字节 |
+| `spring.sc.url-obfuscate.*` | 关闭/空值 | 否 | 配置对象存在，但 Filter 没有读取 |
+
+示例：
+
+```properties
+server.port=6789
+spring.sc.prefix=/sc
+spring.sc.reserve-prefix=/reserve/
+spring.sc.h5-prefix=/h5/
+spring.sc.repeat-queue-size=1000
+spring.sc.encryption.mode=CBC
+spring.sc.encryption.key=replace-with-16b
+spring.sc.encryption.iv=replace-with-16b
+spring.sc.identify=
+```
+
+## 测试状态
+
+以下结果基于 JDK 17 的干净构建：
+
+- `spring-boot-starter-sc`：主代码编译成功。
+- `mvn clean install -DskipTests`：成功，包含 ProGuard 打包。
+- `mvn clean test`：共 8 个测试，7 个通过，`SM4UtilsTest.decryptDataECB` 因解密返回 `null` 而报错。
+- `SpringBootDemo` 的 `mvn test`：1 个 Spring 上下文测试通过。
+- JavaScript SDK：5 个协议、Unicode、错误处理和模块入口测试通过；固定向量与 Spring Boot H5 实现一致。
+- Android：当前验证环境缺少可供 Gradle 使用的 JDK 11，未完成构建验证。
+- iOS：当前验证环境只有 Xcode Command Line Tools，未完成工程构建验证。
+
+现有测试主要覆盖 Base32 和 SM4 算法样例，没有覆盖客户端到 Filter 再到 Controller 的完整端到端请求。
+
+## 安全边界与已知问题
+
+在将项目用于真实业务前，至少需要处理以下问题：
+
+1. **标准通道 URI 不提供可靠保密性。** URI 加密密钥本身被混入请求路径，服务端只是按小写字符提取；观察流量的一方也可以执行相同操作。
+2. **Body 使用固定 SM4 密钥和 IV，且没有消息认证。** 当前方案不能可靠检测密文篡改，也不具备前向安全性。
+3. **备用通道没有加密。** Base64、大小写反转和字符替换都可以直接逆向。
+4. **传输层默认使用明文 HTTP。** Android Demo 还显式允许明文流量；标准 C HTTP 客户端不支持 HTTPS。
+5. **iOS 的 `NSURLSessionDelegate` 接受任意服务端证书信任。** 即使改为 HTTPS，也必须删除该逻辑并使用系统校验或证书绑定。
+6. **服务地址、密钥和 IV 被硬编码在客户端源码。** 当前没有运行时初始化接口，也没有安全密钥存储或轮换机制。
+7. **随机数不适合密码学用途。** C 实现使用 `srand(time)` / `rand()` 生成并混合 URI 密钥，同一秒内可能重复且可预测。
+8. **防重放实现不可靠。** URI 在请求到达 10 秒后才加入队列，窗口内的立即重放不会被拦截；备用和 H5 通道完全不检查重复。
+9. **原生 HTTP 实现能力有限。** 仅支持 `HTTP/1.1 200` 和 `Content-Length` 响应，不支持 HTTPS、chunked、重定向等常见行为，响应缓冲区上限约为 40 KiB。
+10. **接口只适合文本 Body。** 当前实现以字符串读写请求和响应，不适合二进制、流式或 multipart 数据。
+11. **错误处理不完整。** 多处解密失败会回退到原文或 `null`，客户端原生代码还存在未完整释放资源、空响应处理等风险。
+12. **配置开关不完整。** `spring.sc.enabled`、`encryption.enabled`、`encryption.algorithm` 和 `url-obfuscate.*` 当前不会改变运行行为。
+
+建议的生产化顺序是：先统一运行时配置和端到端测试，再使用 TLS 与证书校验，随后引入经审计的 AEAD 算法、可靠 nonce/时间窗口防重放、密钥管理与轮换，最后再评估协议混淆需求。协议混淆不能替代标准密码学和 TLS。
+
+## License
+
+本项目使用 [Apache License 2.0](LICENSE)。
