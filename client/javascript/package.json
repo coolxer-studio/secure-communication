@@ -1,7 +1,7 @@
 {
   "name": "@coolxer/secure-communication-js",
-  "version": "0.1.0",
-  "description": "Browser-side codec for the Secure Communication Spring Boot H5 protocol",
+  "version": "0.2.0",
+  "description": "Secure Communication v2 WebCrypto client with an H5 v1 compatibility codec",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.cjs",

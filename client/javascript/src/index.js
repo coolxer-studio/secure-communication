@@ -2,6 +2,18 @@ import { md5Hex } from './md5.js';
 import { decryptCbc, encryptCbc } from './sm4.js';
 import { utf8Decode, utf8Encode } from './utf8.js';
 
+export {
+  SecureCommunicationError,
+  V2_ENVELOPE_MEDIA_TYPE,
+  V2_INTERNATIONAL_SUITE,
+  createV2Codec,
+  deriveAesGcmSession,
+  importAesGcmSession,
+  normalizeV2Path,
+  verifyP256Transcript
+} from './v2.js';
+export { createLegacyH5Xhr, createSecureFetch } from './transport.js';
+
 var APP_ID_LENGTH = 32;
 var KEY_LENGTH = 16;
 var SALT = '_bsdk_';

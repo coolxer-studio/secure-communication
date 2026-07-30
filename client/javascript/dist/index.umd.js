@@ -303,6 +303,808 @@
     return unpad(output);
   }
 
+  function asyncGeneratorStep(n, t, e, r, o, a, c) {
+    try {
+      var i = n[a](c),
+        u = i.value;
+    } catch (n) {
+      return void e(n);
+    }
+    i.done ? t(u) : Promise.resolve(u).then(r, o);
+  }
+  function _asyncToGenerator(n) {
+    return function () {
+      var t = this,
+        e = arguments;
+      return new Promise(function (r, o) {
+        var a = n.apply(t, e);
+        function _next(n) {
+          asyncGeneratorStep(a, r, o, _next, _throw, "next", n);
+        }
+        function _throw(n) {
+          asyncGeneratorStep(a, r, o, _next, _throw, "throw", n);
+        }
+        _next(void 0);
+      });
+    };
+  }
+  function _regenerator() {
+    /*! regenerator-runtime -- Copyright (c) 2014-present, Facebook, Inc. -- license (MIT): https://github.com/babel/babel/blob/main/packages/babel-helpers/LICENSE */
+    var e,
+      t,
+      r = "function" == typeof Symbol ? Symbol : {},
+      n = r.iterator || "@@iterator",
+      o = r.toStringTag || "@@toStringTag";
+    function i(r, n, o, i) {
+      var c = n && n.prototype instanceof Generator ? n : Generator,
+        u = Object.create(c.prototype);
+      return _regeneratorDefine(u, "_invoke", function (r, n, o) {
+        var i,
+          c,
+          u,
+          f = 0,
+          p = o || [],
+          y = false,
+          G = {
+            p: 0,
+            n: 0,
+            v: e,
+            a: d,
+            f: d.bind(e, 4),
+            d: function (t, r) {
+              return i = t, c = 0, u = e, G.n = r, a;
+            }
+          };
+        function d(r, n) {
+          for (c = r, u = n, t = 0; !y && f && !o && t < p.length; t++) {
+            var o,
+              i = p[t],
+              d = G.p,
+              l = i[2];
+            r > 3 ? (o = l === n) && (u = i[(c = i[4]) ? 5 : (c = 3, 3)], i[4] = i[5] = e) : i[0] <= d && ((o = r < 2 && d < i[1]) ? (c = 0, G.v = n, G.n = i[1]) : d < l && (o = r < 3 || i[0] > n || n > l) && (i[4] = r, i[5] = n, G.n = l, c = 0));
+          }
+          if (o || r > 1) return a;
+          throw y = true, n;
+        }
+        return function (o, p, l) {
+          if (f > 1) throw TypeError("Generator is already running");
+          for (y && 1 === p && d(p, l), c = p, u = l; (t = c < 2 ? e : u) || !y;) {
+            i || (c ? c < 3 ? (c > 1 && (G.n = -1), d(c, u)) : G.n = u : G.v = u);
+            try {
+              if (f = 2, i) {
+                if (c || (o = "next"), t = i[o]) {
+                  if (!(t = t.call(i, u))) throw TypeError("iterator result is not an object");
+                  if (!t.done) return t;
+                  u = t.value, c < 2 && (c = 0);
+                } else 1 === c && (t = i.return) && t.call(i), c < 2 && (u = TypeError("The iterator does not provide a '" + o + "' method"), c = 1);
+                i = e;
+              } else if ((t = (y = G.n < 0) ? u : r.call(n, G)) !== a) break;
+            } catch (t) {
+              i = e, c = 1, u = t;
+            } finally {
+              f = 1;
+            }
+          }
+          return {
+            value: t,
+            done: y
+          };
+        };
+      }(r, o, i), true), u;
+    }
+    var a = {};
+    function Generator() {}
+    function GeneratorFunction() {}
+    function GeneratorFunctionPrototype() {}
+    t = Object.getPrototypeOf;
+    var c = [][n] ? t(t([][n]())) : (_regeneratorDefine(t = {}, n, function () {
+        return this;
+      }), t),
+      u = GeneratorFunctionPrototype.prototype = Generator.prototype = Object.create(c);
+    function f(e) {
+      return Object.setPrototypeOf ? Object.setPrototypeOf(e, GeneratorFunctionPrototype) : (e.__proto__ = GeneratorFunctionPrototype, _regeneratorDefine(e, o, "GeneratorFunction")), e.prototype = Object.create(u), e;
+    }
+    return GeneratorFunction.prototype = GeneratorFunctionPrototype, _regeneratorDefine(u, "constructor", GeneratorFunctionPrototype), _regeneratorDefine(GeneratorFunctionPrototype, "constructor", GeneratorFunction), GeneratorFunction.displayName = "GeneratorFunction", _regeneratorDefine(GeneratorFunctionPrototype, o, "GeneratorFunction"), _regeneratorDefine(u), _regeneratorDefine(u, o, "Generator"), _regeneratorDefine(u, n, function () {
+      return this;
+    }), _regeneratorDefine(u, "toString", function () {
+      return "[object Generator]";
+    }), (_regenerator = function () {
+      return {
+        w: i,
+        m: f
+      };
+    })();
+  }
+  function _regeneratorDefine(e, r, n, t) {
+    var i = Object.defineProperty;
+    try {
+      i({}, "", {});
+    } catch (e) {
+      i = 0;
+    }
+    _regeneratorDefine = function (e, r, n, t) {
+      function o(r, n) {
+        _regeneratorDefine(e, r, function (e) {
+          return this._invoke(r, n, e);
+        });
+      }
+      r ? i ? i(e, r, {
+        value: n,
+        enumerable: !t,
+        configurable: !t,
+        writable: !t
+      }) : e[r] = n : (o("next", 0), o("throw", 1), o("return", 2));
+    }, _regeneratorDefine(e, r, n, t);
+  }
+  function _typeof(o) {
+    "@babel/helpers - typeof";
+
+    return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) {
+      return typeof o;
+    } : function (o) {
+      return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o;
+    }, _typeof(o);
+  }
+
+  var VERSION = 2;
+  var SUITE = 'SC2_P256_HKDF_SHA256_AES_256_GCM';
+  var MAX_SEQUENCE = 9007199254740991;
+  var IDENTIFIER = /^[\x21-\x7e]{1,128}$/;
+  var BASE64URL = /^[A-Za-z0-9_-]+$/;
+  function SecureCommunicationError(code, message, details) {
+    this.name = 'SecureCommunicationError';
+    this.code = code;
+    this.message = message || code;
+    this.status = details && details.status;
+    this.traceId = details && details.traceId;
+    this.cause = details && details.cause;
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, SecureCommunicationError);
+    }
+  }
+  SecureCommunicationError.prototype = Object.create(Error.prototype);
+  SecureCommunicationError.prototype.constructor = SecureCommunicationError;
+  function fail(code, message, cause) {
+    throw new SecureCommunicationError(code, message, {
+      cause: cause
+    });
+  }
+  function getSubtle(explicit) {
+    if (explicit) {
+      return explicit;
+    }
+    if (typeof globalThis !== 'undefined' && globalThis.crypto && globalThis.crypto.subtle) {
+      return globalThis.crypto.subtle;
+    }
+    fail('SC_CRYPTO_UNAVAILABLE', 'WebCrypto SubtleCrypto is required');
+  }
+  function asBytes(value, name) {
+    if (value instanceof Uint8Array) {
+      return new Uint8Array(value);
+    }
+    if (typeof ArrayBuffer !== 'undefined' && value instanceof ArrayBuffer) {
+      return new Uint8Array(value.slice(0));
+    }
+    if (typeof value === 'string') {
+      return new Uint8Array(utf8Encode(value));
+    }
+    throw new TypeError(name + ' must be a string, Uint8Array, or ArrayBuffer');
+  }
+  function requireIdentifier(value, name) {
+    if (typeof value !== 'string' || !IDENTIFIER.test(value)) {
+      throw new TypeError(name + ' must contain 1-128 visible ASCII characters');
+    }
+  }
+  function requirePrefix(value, name) {
+    var bytes = asBytes(value, name);
+    if (bytes.length !== 4) {
+      throw new TypeError(name + ' must contain exactly 4 bytes');
+    }
+    return bytes;
+  }
+  function normalizeContentType(value) {
+    var normalized = value ? String(value).split(';', 1)[0].trim().toLowerCase() : 'application/octet-stream';
+    if (!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(normalized)) {
+      throw new TypeError('contentType is invalid');
+    }
+    return normalized;
+  }
+  function uppercasePercentHex(value) {
+    var index;
+    var result = '';
+    for (index = 0; index < value.length; index += 1) {
+      if (value.charAt(index) === '%') {
+        if (index + 2 >= value.length || !/^[0-9a-fA-F]{2}$/.test(value.slice(index + 1, index + 3))) {
+          throw new TypeError('path contains invalid percent-encoding');
+        }
+        result += '%' + value.slice(index + 1, index + 3).toUpperCase();
+        index += 2;
+      } else {
+        result += value.charAt(index);
+      }
+    }
+    return result;
+  }
+  function queryParts(pair) {
+    var index = pair.indexOf('=');
+    return index < 0 ? [pair, ''] : [pair.slice(0, index), pair.slice(index + 1)];
+  }
+  function normalizeV2Path(value) {
+    if (typeof value !== 'string' || value.charAt(0) !== '/' || value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0 || value.indexOf('#') >= 0 || value.indexOf('://') >= 0 || value.indexOf(' ') >= 0) {
+      throw new TypeError('path must be an absolute encoded business path');
+    }
+    var split = value.split('?');
+    if (split.length > 2) {
+      throw new TypeError('path contains more than one query separator');
+    }
+    var path = uppercasePercentHex(split[0]);
+    if (split.length === 1 || split[1] === '') {
+      return path;
+    }
+    var pairs = split[1].split('&').filter(function nonEmpty(pair) {
+      return pair !== '';
+    }).map(uppercasePercentHex);
+    pairs.sort(function compare(left, right) {
+      var leftParts = queryParts(left);
+      var rightParts = queryParts(right);
+      if (leftParts[0] < rightParts[0]) {
+        return -1;
+      }
+      if (leftParts[0] > rightParts[0]) {
+        return 1;
+      }
+      if (leftParts[1] < rightParts[1]) {
+        return -1;
+      }
+      if (leftParts[1] > rightParts[1]) {
+        return 1;
+      }
+      return 0;
+    });
+    return pairs.length ? path + '?' + pairs.join('&') : path;
+  }
+  function normalizeMethod(value) {
+    var method = String(value || 'GET').toUpperCase();
+    if (!/^[A-Z]{3,16}$/.test(method)) {
+      throw new TypeError('method is invalid');
+    }
+    return method;
+  }
+  function nonce(prefix, sequence) {
+    var result = new Uint8Array(12);
+    var view = new DataView(result.buffer);
+    result.set(prefix, 0);
+    view.setUint32(4, Math.floor(sequence / 4294967296), false);
+    view.setUint32(8, sequence >>> 0, false);
+    return result;
+  }
+  function equalBytes(left, right) {
+    if (left.length !== right.length) {
+      return false;
+    }
+    var difference = 0;
+    var index;
+    for (index = 0; index < left.length; index += 1) {
+      difference |= left[index] ^ right[index];
+    }
+    return difference === 0;
+  }
+  function base64UrlEncode(bytes) {
+    var binary = '';
+    var index;
+    for (index = 0; index < bytes.length; index += 1) {
+      binary += String.fromCharCode(bytes[index]);
+    }
+    if (typeof btoa !== 'function') {
+      fail('SC_ENCODING_UNAVAILABLE', 'Base64 encoder is unavailable');
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function base64UrlDecode(value) {
+    if (typeof value !== 'string' || !BASE64URL.test(value)) {
+      fail('SC_INVALID_ENVELOPE', 'Envelope Base64URL value is invalid');
+    }
+    if (typeof atob !== 'function') {
+      fail('SC_ENCODING_UNAVAILABLE', 'Base64 decoder is unavailable');
+    }
+    var padded = value.replace(/-/g, '+').replace(/_/g, '/');
+    while (padded.length % 4) {
+      padded += '=';
+    }
+    var binary;
+    try {
+      binary = atob(padded);
+    } catch (error) {
+      fail('SC_INVALID_ENVELOPE', 'Envelope Base64URL value is invalid', error);
+    }
+    var bytes = new Uint8Array(binary.length);
+    var index;
+    for (index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+  function aad(direction, envelope) {
+    var lines = ['SC2', direction, envelope.suite, envelope.kid, envelope.sid, String(envelope.ts), String(envelope.seq), envelope.m, envelope.p, envelope.cty];
+    if (direction === 'response') {
+      lines.push(String(envelope.st));
+    }
+    return new Uint8Array(utf8Encode(lines.join('\n')));
+  }
+  function validateEnvelope(envelope, session, now, allowedClockSkewMs) {
+    var expectedKeys = ['ct', 'cty', 'kid', 'm', 'nonce', 'p', 'seq', 'sid', 'st', 'suite', 'ts', 'v'];
+    var keys = Object.keys(envelope).sort();
+    if (keys.length !== expectedKeys.length || keys.join('|') !== expectedKeys.join('|')) {
+      fail('SC_INVALID_ENVELOPE', 'Envelope fields are invalid');
+    }
+    if (envelope.v !== VERSION) {
+      fail('SC_UNSUPPORTED_VERSION', 'Envelope version is unsupported');
+    }
+    if (envelope.suite !== session.suite || envelope.kid !== session.kid || envelope.sid !== session.sid) {
+      fail('SC_UNKNOWN_SESSION', 'Envelope session does not match');
+    }
+    if (!Number.isSafeInteger(envelope.seq) || envelope.seq < 1) {
+      fail('SC_INVALID_ENVELOPE', 'Envelope sequence is invalid');
+    }
+    if (!Number.isInteger(envelope.st) || envelope.st < 100 || envelope.st > 599) {
+      fail('SC_INVALID_ENVELOPE', 'Envelope status is invalid');
+    }
+    if (!Number.isSafeInteger(envelope.ts) || Math.abs(now - envelope.ts) > allowedClockSkewMs) {
+      fail('SC_REQUEST_EXPIRED', 'Envelope timestamp is outside the accepted window');
+    }
+    if (normalizeMethod(envelope.m) !== envelope.m || normalizeV2Path(envelope.p) !== envelope.p || normalizeContentType(envelope.cty) !== envelope.cty) {
+      fail('SC_ROUTE_MISMATCH', 'Envelope route binding is not canonical');
+    }
+  }
+  function importAesGcmSession(_x, _x2) {
+    return _importAesGcmSession.apply(this, arguments);
+  }
+
+  /**
+   * Derives direction-separated session material from an already authenticated
+   * P-256 ECDH handshake transcript.
+   */
+  function _importAesGcmSession() {
+    _importAesGcmSession = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee3(material, options) {
+      var subtle, requestKey, responseKey;
+      return _regenerator().w(function (_context3) {
+        while (1) switch (_context3.n) {
+          case 0:
+            options = options || {};
+            requireIdentifier(material.kid, 'kid');
+            requireIdentifier(material.sid, 'sid');
+            subtle = getSubtle(options.subtle);
+            _context3.n = 1;
+            return subtle.importKey('raw', asBytes(material.requestKey, 'requestKey'), {
+              name: 'AES-GCM',
+              length: 256
+            }, false, ['encrypt']);
+          case 1:
+            requestKey = _context3.v;
+            _context3.n = 2;
+            return subtle.importKey('raw', asBytes(material.responseKey, 'responseKey'), {
+              name: 'AES-GCM',
+              length: 256
+            }, false, ['decrypt']);
+          case 2:
+            responseKey = _context3.v;
+            return _context3.a(2, {
+              suite: SUITE,
+              kid: material.kid,
+              sid: material.sid,
+              requestKey: requestKey,
+              responseKey: responseKey,
+              requestNoncePrefix: requirePrefix(material.requestNoncePrefix, 'requestNoncePrefix'),
+              responseNoncePrefix: requirePrefix(material.responseNoncePrefix, 'responseNoncePrefix'),
+              expiresAt: material.expiresAt == null ? null : Number(material.expiresAt)
+            });
+        }
+      }, _callee3);
+    }));
+    return _importAesGcmSession.apply(this, arguments);
+  }
+  function deriveAesGcmSession(_x3, _x4) {
+    return _deriveAesGcmSession.apply(this, arguments);
+  }
+  function _deriveAesGcmSession() {
+    _deriveAesGcmSession = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee4(material, options) {
+      var subtle, transcriptHash, sharedSecret, hkdfKey, derived, bytes, session, _t3;
+      return _regenerator().w(function (_context4) {
+        while (1) switch (_context4.p = _context4.n) {
+          case 0:
+            options = options || {};
+            subtle = getSubtle(options.subtle);
+            transcriptHash = asBytes(material.transcriptHash, 'transcriptHash');
+            if (!(transcriptHash.length !== 32)) {
+              _context4.n = 1;
+              break;
+            }
+            throw new TypeError('transcriptHash must contain exactly 32 bytes');
+          case 1:
+            _context4.p = 1;
+            _context4.n = 2;
+            return subtle.deriveBits({
+              name: 'ECDH',
+              "public": material.peerEphemeralPublicKey
+            }, material.localEphemeralPrivateKey, 256);
+          case 2:
+            sharedSecret = _context4.v;
+            _context4.n = 3;
+            return subtle.importKey('raw', sharedSecret, 'HKDF', false, ['deriveBits']);
+          case 3:
+            hkdfKey = _context4.v;
+            _context4.n = 4;
+            return subtle.deriveBits({
+              name: 'HKDF',
+              hash: 'SHA-256',
+              salt: transcriptHash,
+              info: new Uint8Array(utf8Encode('SC2/session/' + SUITE + '/' + material.sid))
+            }, hkdfKey, 72 * 8);
+          case 4:
+            derived = _context4.v;
+            _context4.n = 6;
+            break;
+          case 5:
+            _context4.p = 5;
+            _t3 = _context4.v;
+            fail('SC_HANDSHAKE_FAILED', 'Session key derivation failed', _t3);
+          case 6:
+            bytes = new Uint8Array(derived);
+            _context4.n = 7;
+            return importAesGcmSession({
+              kid: material.kid,
+              sid: material.sid,
+              requestKey: bytes.slice(0, 32),
+              responseKey: bytes.slice(32, 64),
+              requestNoncePrefix: bytes.slice(64, 68),
+              responseNoncePrefix: bytes.slice(68, 72),
+              expiresAt: material.expiresAt
+            }, {
+              subtle: subtle
+            });
+          case 7:
+            session = _context4.v;
+            bytes.fill(0);
+            new Uint8Array(sharedSecret).fill(0);
+            return _context4.a(2, session);
+        }
+      }, _callee4, null, [[1, 5]]);
+    }));
+    return _deriveAesGcmSession.apply(this, arguments);
+  }
+  function verifyP256Transcript(_x5, _x6, _x7, _x8) {
+    return _verifyP256Transcript.apply(this, arguments);
+  }
+  function _verifyP256Transcript() {
+    _verifyP256Transcript = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee5(transcriptHash, p1363Signature, serverSigningPublicKey, options) {
+      var hash, signature, _t4;
+      return _regenerator().w(function (_context5) {
+        while (1) switch (_context5.p = _context5.n) {
+          case 0:
+            options = options || {};
+            hash = asBytes(transcriptHash, 'transcriptHash');
+            signature = asBytes(p1363Signature, 'p1363Signature');
+            if (!(hash.length !== 32 || signature.length !== 64)) {
+              _context5.n = 1;
+              break;
+            }
+            return _context5.a(2, false);
+          case 1:
+            _context5.p = 1;
+            _context5.n = 2;
+            return getSubtle(options.subtle).verify({
+              name: 'ECDSA',
+              hash: 'SHA-256'
+            }, serverSigningPublicKey, signature, hash);
+          case 2:
+            return _context5.a(2, _context5.v);
+          case 3:
+            _context5.p = 3;
+            _t4 = _context5.v;
+            fail('SC_HANDSHAKE_FAILED', 'Transcript verification failed', _t4);
+          case 4:
+            return _context5.a(2);
+        }
+      }, _callee5, null, [[1, 3]]);
+    }));
+    return _verifyP256Transcript.apply(this, arguments);
+  }
+  function createV2Codec(session, options) {
+    options = options || {};
+    if (!session || session.suite !== SUITE) {
+      throw new TypeError('A supported v2 session is required');
+    }
+    requireIdentifier(session.kid, 'session.kid');
+    requireIdentifier(session.sid, 'session.sid');
+    var requestPrefix = requirePrefix(session.requestNoncePrefix, 'session.requestNoncePrefix');
+    var responsePrefix = requirePrefix(session.responseNoncePrefix, 'session.responseNoncePrefix');
+    var subtle = getSubtle(options.subtle);
+    var clock = options.now || Date.now;
+    var allowedClockSkewMs = options.allowedClockSkewMs == null ? 300000 : Number(options.allowedClockSkewMs);
+    var nextSequence = options.initialSequence == null ? 1 : Number(options.initialSequence);
+    function encodeRequest(_x9) {
+      return _encodeRequest.apply(this, arguments);
+    }
+    function _encodeRequest() {
+      _encodeRequest = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee(request) {
+        var sequence, timestamp, envelope, requestNonce, sealed, _t;
+        return _regenerator().w(function (_context) {
+          while (1) switch (_context.p = _context.n) {
+            case 0:
+              request = request || {};
+              if (!Number.isSafeInteger(nextSequence) || nextSequence < 1 || nextSequence > MAX_SEQUENCE) {
+                fail('SC_SEQUENCE_EXHAUSTED', 'Session sequence is exhausted');
+              }
+              sequence = nextSequence;
+              nextSequence += 1;
+              timestamp = Number(clock());
+              if (!Number.isSafeInteger(timestamp)) {
+                fail('SC_CLOCK_INVALID', 'Clock must return epoch milliseconds');
+              }
+              if (session.expiresAt != null && timestamp >= session.expiresAt) {
+                fail('SC_UNKNOWN_SESSION', 'Session has expired');
+              }
+              envelope = {
+                v: VERSION,
+                suite: session.suite,
+                kid: session.kid,
+                sid: session.sid,
+                ts: timestamp,
+                seq: sequence,
+                m: normalizeMethod(request.method),
+                p: normalizeV2Path(request.path),
+                cty: normalizeContentType(request.contentType),
+                st: 0,
+                nonce: '',
+                ct: ''
+              };
+              requestNonce = nonce(requestPrefix, sequence);
+              envelope.nonce = base64UrlEncode(requestNonce);
+              _context.p = 1;
+              _context.n = 2;
+              return subtle.encrypt({
+                name: 'AES-GCM',
+                iv: requestNonce,
+                additionalData: aad('request', envelope),
+                tagLength: 128
+              }, session.requestKey, asBytes(request.body == null ? new Uint8Array(0) : request.body, 'body'));
+            case 2:
+              sealed = _context.v;
+              _context.n = 4;
+              break;
+            case 3:
+              _context.p = 3;
+              _t = _context.v;
+              fail('SC_CRYPTO_FAILED', 'Request encryption failed', _t);
+            case 4:
+              envelope.ct = base64UrlEncode(new Uint8Array(sealed));
+              return _context.a(2, JSON.stringify(envelope));
+          }
+        }, _callee, null, [[1, 3]]);
+      }));
+      return _encodeRequest.apply(this, arguments);
+    }
+    function decodeResponse(_x0, _x1) {
+      return _decodeResponse.apply(this, arguments);
+    }
+    function _decodeResponse() {
+      _decodeResponse = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(encoded, expected) {
+        var envelope, responseNonce, opened, _t2;
+        return _regenerator().w(function (_context2) {
+          while (1) switch (_context2.p = _context2.n) {
+            case 0:
+              try {
+                envelope = typeof encoded === 'string' ? JSON.parse(encoded) : encoded;
+              } catch (error) {
+                fail('SC_INVALID_ENVELOPE', 'Response is not valid JSON', error);
+              }
+              if (!envelope || _typeof(envelope) !== 'object' || Array.isArray(envelope)) {
+                fail('SC_INVALID_ENVELOPE', 'Response envelope is invalid');
+              }
+              validateEnvelope(envelope, session, Number(clock()), allowedClockSkewMs);
+              expected = expected || {};
+              if (expected.sequence != null && envelope.seq !== expected.sequence || expected.method && envelope.m !== normalizeMethod(expected.method) || expected.path && envelope.p !== normalizeV2Path(expected.path)) {
+                fail('SC_ROUTE_MISMATCH', 'Response does not match the request');
+              }
+              responseNonce = base64UrlDecode(envelope.nonce);
+              if (!equalBytes(responseNonce, nonce(responsePrefix, envelope.seq))) {
+                fail('SC_INVALID_ENVELOPE', 'Response nonce is invalid');
+              }
+              _context2.p = 1;
+              _context2.n = 2;
+              return subtle.decrypt({
+                name: 'AES-GCM',
+                iv: responseNonce,
+                additionalData: aad('response', envelope),
+                tagLength: 128
+              }, session.responseKey, base64UrlDecode(envelope.ct));
+            case 2:
+              opened = _context2.v;
+              _context2.n = 4;
+              break;
+            case 3:
+              _context2.p = 3;
+              _t2 = _context2.v;
+              fail('SC_AUTHENTICATION_FAILED', 'Response authentication failed', _t2);
+            case 4:
+              return _context2.a(2, {
+                body: new Uint8Array(opened),
+                contentType: envelope.cty,
+                status: envelope.st,
+                envelope: envelope,
+                text: function text() {
+                  return utf8Decode(Array.prototype.slice.call(new Uint8Array(opened)));
+                }
+              });
+          }
+        }, _callee2, null, [[1, 3]]);
+      }));
+      return _decodeResponse.apply(this, arguments);
+    }
+    return {
+      encodeRequest: encodeRequest,
+      decodeResponse: decodeResponse
+    };
+  }
+  var V2_INTERNATIONAL_SUITE = SUITE;
+  var V2_ENVELOPE_MEDIA_TYPE = 'application/sc-envelope+json';
+
+  function requireHttps(baseUrl, allowInsecureForTesting) {
+    var parsed = new URL(baseUrl);
+    if (parsed.protocol !== 'https:' && !allowInsecureForTesting) {
+      throw new TypeError('baseUrl must use HTTPS');
+    }
+    return parsed.toString().replace(/\/+$/, '');
+  }
+  function getHeader(headers, name) {
+    if (!headers) {
+      return null;
+    }
+    if (typeof headers.get === 'function') {
+      return headers.get(name);
+    }
+    var lower = name.toLowerCase();
+    var keys = Object.keys(headers);
+    var index;
+    for (index = 0; index < keys.length; index += 1) {
+      if (keys[index].toLowerCase() === lower) {
+        return headers[keys[index]];
+      }
+    }
+    return null;
+  }
+  function createSecureFetch(configuration) {
+    configuration = configuration || {};
+    if (!configuration.codec) {
+      throw new TypeError('codec is required');
+    }
+    var fetchImplementation = configuration.fetch || (typeof fetch === 'function' ? fetch : null);
+    if (!fetchImplementation) {
+      throw new TypeError('fetch implementation is required');
+    }
+    var baseUrl = requireHttps(configuration.baseUrl, configuration.allowInsecureForTesting === true);
+    var endpoint = baseUrl + (configuration.endpoint || '/sc/v2');
+    return /*#__PURE__*/function () {
+      var _secureFetch = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee(path, init) {
+        var method, contentType, encoded, requestEnvelope, response, responseText, responseMediaType, errorBody, decoded;
+        return _regenerator().w(function (_context) {
+          while (1) switch (_context.n) {
+            case 0:
+              init = init || {};
+              method = String(init.method || 'GET').toUpperCase();
+              contentType = getHeader(init.headers, 'content-type') || 'application/octet-stream';
+              _context.n = 1;
+              return configuration.codec.encodeRequest({
+                method: method,
+                path: path,
+                contentType: contentType,
+                body: init.body == null ? new Uint8Array(0) : init.body
+              });
+            case 1:
+              encoded = _context.v;
+              requestEnvelope = JSON.parse(encoded);
+              _context.n = 2;
+              return fetchImplementation(endpoint, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': V2_ENVELOPE_MEDIA_TYPE,
+                  'Accept': V2_ENVELOPE_MEDIA_TYPE
+                },
+                body: encoded,
+                signal: init.signal,
+                credentials: init.credentials,
+                cache: 'no-store',
+                redirect: 'error'
+              });
+            case 2:
+              response = _context.v;
+              _context.n = 3;
+              return response.text();
+            case 3:
+              responseText = _context.v;
+              responseMediaType = String(getHeader(response.headers, 'content-type') || '').split(';', 1)[0].trim();
+              if (!(responseMediaType.toLowerCase() !== V2_ENVELOPE_MEDIA_TYPE)) {
+                _context.n = 4;
+                break;
+              }
+              try {
+                errorBody = JSON.parse(responseText);
+              } catch (ignored) {
+                errorBody = {};
+              }
+              throw new SecureCommunicationError(errorBody.code || 'SC_TRANSPORT_FAILED', errorBody.message || 'Secure transport failed', {
+                status: response.status,
+                traceId: errorBody.traceId
+              });
+            case 4:
+              _context.n = 5;
+              return configuration.codec.decodeResponse(responseText, {
+                sequence: requestEnvelope.seq,
+                method: method,
+                path: path
+              });
+            case 5:
+              decoded = _context.v;
+              return _context.a(2, {
+                status: decoded.status,
+                ok: decoded.status >= 200 && decoded.status < 300,
+                contentType: decoded.contentType,
+                body: decoded.body,
+                text: decoded.text,
+                json: function json() {
+                  return JSON.parse(decoded.text());
+                }
+              });
+          }
+        }, _callee);
+      }));
+      function secureFetch(_x, _x2) {
+        return _secureFetch.apply(this, arguments);
+      }
+      return secureFetch;
+    }();
+  }
+
+  /**
+   * Explicit v1 H5 transport for hosts that still require XMLHttpRequest.
+   * It never falls back from v2 and therefore requires a caller-supplied H5 codec.
+   */
+  function createLegacyH5Xhr(configuration) {
+    configuration = configuration || {};
+    if (!configuration.codec) {
+      throw new TypeError('legacy H5 codec is required');
+    }
+    var Xhr = configuration.XMLHttpRequest || (typeof XMLHttpRequest !== 'undefined' ? XMLHttpRequest : null);
+    if (!Xhr) {
+      throw new TypeError('XMLHttpRequest implementation is required');
+    }
+    var baseUrl = requireHttps(configuration.baseUrl, configuration.allowInsecureForTesting === true);
+    return function legacyH5Request(path, plainText) {
+      return new Promise(function perform(resolve, reject) {
+        var xhr = new Xhr();
+        xhr.open('POST', baseUrl + '/sc/h5' + path, true);
+        xhr.setRequestHeader('Content-Type', 'text/plain;charset=UTF-8');
+        xhr.onload = function loaded() {
+          if (xhr.status < 200 || xhr.status >= 300) {
+            reject(new SecureCommunicationError('SC_LEGACY_TRANSPORT_FAILED', 'Legacy H5 transport failed', {
+              status: xhr.status
+            }));
+            return;
+          }
+          try {
+            resolve(configuration.codec.decodeResponse(xhr.responseText));
+          } catch (error) {
+            reject(error);
+          }
+        };
+        xhr.onerror = function failed() {
+          reject(new SecureCommunicationError('SC_NETWORK_FAILED', 'Legacy H5 network request failed'));
+        };
+        xhr.send(configuration.codec.encodeRequest(plainText));
+      });
+    };
+  }
+
   var APP_ID_LENGTH = 32;
   var KEY_LENGTH = 16;
   var SALT = '_bsdk_';
@@ -366,7 +1168,17 @@
     };
   }
 
+  exports.SecureCommunicationError = SecureCommunicationError;
+  exports.V2_ENVELOPE_MEDIA_TYPE = V2_ENVELOPE_MEDIA_TYPE;
+  exports.V2_INTERNATIONAL_SUITE = V2_INTERNATIONAL_SUITE;
   exports.createH5Codec = createH5Codec;
+  exports.createLegacyH5Xhr = createLegacyH5Xhr;
+  exports.createSecureFetch = createSecureFetch;
+  exports.createV2Codec = createV2Codec;
+  exports.deriveAesGcmSession = deriveAesGcmSession;
+  exports.importAesGcmSession = importAesGcmSession;
+  exports.normalizeV2Path = normalizeV2Path;
+  exports.verifyP256Transcript = verifyP256Transcript;
 
 }));
 //# sourceMappingURL=index.umd.js.map

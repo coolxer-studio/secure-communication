@@ -1,71 +1,99 @@
 # @coolxer/secure-communication-js
 
-浏览器端 H5 通信编解码 SDK，与本仓库 Spring Boot Starter 的 `/sc/h5/**` 通道兼容。
+JavaScript 客户端同时提供：
 
-> 该协议只提供现有业务所需的报文加密兼容能力，不替代 HTTPS，也不提供消息认证、防篡改或防重放能力。
+- v2 WebCrypto 协议核心与 Promise/fetch 官方适配器；
+- 显式的 XHR H5 v1 迁移适配器；
+- 原有 `createH5Codec(appId)` 字节兼容实现。
 
-## 安装
+版本：`0.2.0`。包提供 CommonJS、ES Module 和 UMD 产物；UMD 全局名为
+`SecureCommunicationJS`。
 
-当前仓库尚未发布 npm 版本。在相邻的 `agent-h5` 项目中可使用本地依赖：
-
-```json
-{
-  "dependencies": {
-    "@coolxer/secure-communication-js": "file:../../../secure-communication/client/javascript"
-  }
-}
-```
-
-也可以在 SDK 目录生成安装包：
-
-```bash
-npm install
-npm test
-npm pack
-```
-
-## 使用
+## v2
 
 ```js
-import { createH5Codec } from '@coolxer/secure-communication-js';
+import {
+  createSecureFetch,
+  createV2Codec,
+  importAesGcmSession
+} from '@coolxer/secure-communication-js';
+
+const session = await importAesGcmSession({
+  kid,
+  sid,
+  requestKey,
+  responseKey,
+  requestNoncePrefix,
+  responseNoncePrefix,
+  expiresAt
+});
+const codec = createV2Codec(session);
+const secureFetch = createSecureFetch({
+  baseUrl: 'https://api.example.com',
+  codec
+});
+
+const response = await secureFetch('/messages?lang=zh', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ message: 'hello' })
+});
+const value = response.json();
+```
+
+`requestKey` 和 `responseKey` 是 32 字节的已认证握手结果；
+`importAesGcmSession` 将其导入为不可导出的 AES-GCM `CryptoKey`。生产代码不能把
+这些字节写入源码、localStorage 或 Bundle。每次并发调用会在异步加密前分配独立
+序列号；失败重试需要重新调用，不能重发相同信封。
+
+`createSecureFetch`：
+
+- 强制 HTTPS；
+- 将逻辑 HTTP 方法和规范化路径写入认证信封；
+- 统一通过 `POST /sc/v2` 传输；
+- 使用宿主提供的 `fetch`、`AbortSignal`、credentials 配置；
+- 认证/路由失败直接抛出 `SecureCommunicationError`，不会进入 v1。
+
+## H5 v1 compatibility
+
+```js
+import {
+  createH5Codec,
+  createLegacyH5Xhr
+} from '@coolxer/secure-communication-js';
 
 const codec = createH5Codec('1596861234c4ea6ddd041d45b3912345');
-const requestBody = codec.encodeRequest(JSON.stringify({ message: 'hello' }));
+const body = codec.encodeRequest(JSON.stringify({ message: 'hello' }));
 
-// 将 requestBody POST 到 /sc/h5/** 后，解密非空响应：
-const response = JSON.parse(codec.decodeResponse(responseCipherHex));
+const legacyRequest = createLegacyH5Xhr({
+  baseUrl: 'https://api.example.com',
+  codec
+});
+const plaintext = await legacyRequest('/messages', '{"message":"hello"}');
 ```
 
-`encrypt` 和 `decrypt` 只处理 Hex 密文，不拼接 appId，可用于需要与通信协议保持同一算法的本地数据：
+`createH5Codec` 仍提供 `encrypt`、`decrypt`、`encodeRequest` 和
+`decodeResponse`。appId 必须为 32 字符；非法 Hex、块长度和 PKCS#7 padding
+均抛错。
 
-```js
-const cipherHex = codec.encrypt('text');
-const plainText = codec.decrypt(cipherHex);
-```
-
-## API
-
-### `createH5Codec(appId)`
-
-`appId` 必须是长度为 32 的字符串。返回：
-
-- `encrypt(plainText)`：使用 SM4-CBC 加密字符串，返回大写 Hex。
-- `decrypt(cipherHex)`：解密大小写均可的 Hex，返回 UTF-8 字符串。
-- `encodeRequest(plainText)`：返回 `encrypt(plainText) + appId.toUpperCase()`。
-- `decodeResponse(cipherHex)`：解密服务端 H5 通道返回的 Hex。
-
-非法 appId、非字符串明文、非法 Hex、错误块长度或无效 PKCS#7 padding 会抛出异常。
-
-## 协议
+H5 v1 使用：
 
 ```text
 key = MD5(lowercase(appId) + "_bsdk_")[0..15]
 iv = key
-request = UPPER_HEX(SM4-CBC-PKCS7(UTF8(plainText), key, iv))
-          + uppercase(appId)
-response = HEX(SM4-CBC-PKCS7(UTF8(plainText), key, iv))
+request = UPPER_HEX(legacy-SM4-CBC-PKCS7(UTF8(plaintext))) + uppercase(appId)
 ```
 
-为兼容已经部署的 Spring Boot H5 实现，SDK 保留了服务端轮转函数中的算术右移行为。它与标准 SM4 实现存在差异，不能在没有固定向量验证的情况下直接替换为通用 SM4 库。
+它为兼容历史 Spring 实现保留了非标准轮转行为，不得标识为通用 GB/T 32907
+实现，也不提供认证、防篡改或防重放。
 
-构建产物包含 CommonJS、ES Module 和 UMD 三种入口。直接通过 `<script>` 加载 UMD 文件时，API 位于 `window.SecureCommunicationJS`。
+## Build
+
+```bash
+npm ci
+npm test
+npm pack --dry-run
+```
+
+测试覆盖 H5 固定报文、Unicode/emoji、非法输入、v2 跨语言 AES-GCM 向量、
+方向隔离、路由篡改、并发序列以及 CJS/ESM/UMD 入口。
