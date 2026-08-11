@@ -8,7 +8,7 @@
 		<version>3.0.2</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
-	<groupId>com.abc.demo</groupId>
+	<groupId>com.coolxer.securecommunication.demo</groupId>
 	<artifactId>demo</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
 	<name>SpringBootDemo</name>
@@ -23,9 +23,9 @@
 		</dependency>
 
 		<dependency>
-			<groupId>com.abc</groupId>
-			<artifactId>spring-boot-starter-sc</artifactId>
-			<version>1.1.0</version>
+			<groupId>com.coolxer.securecommunication</groupId>
+			<artifactId>secure-communication-spring-boot-starter</artifactId>
+			<version>1.0.0</version>
 		</dependency>
 
 		<dependency>

@@ -1,7 +1,7 @@
 {
   "name": "@coolxer/secure-communication-js",
-  "version": "0.2.0",
-  "description": "Secure Communication v2 WebCrypto client with an H5 v1 compatibility codec",
+  "version": "1.0.0",
+  "description": "Secure Communication protocol v1 WebCrypto client",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -21,6 +21,7 @@
   ],
   "scripts": {
     "build": "rollup --config",
+    "dev": "rollup --config --watch",
     "test": "npm run build && node --test",
     "prepack": "npm run build"
   },

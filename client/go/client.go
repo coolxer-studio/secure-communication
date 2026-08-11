@@ -1,0 +1,586 @@
+package securecommunication
+
+import (
+	"bytes"
+	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math/big"
+	"net/http"
+	"net/url"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	ProtocolVersion    = 1
+	InternationalSuite = "P256_HKDF_SHA256_AES256_GCM"
+	EnvelopeMediaType  = "application/sc-envelope+json"
+	ProtectedMediaType = "application/sc-protected+json"
+	MessageEndpoint    = "/sc/v1/message"
+)
+
+type Error struct {
+	Code    string
+	Status  int
+	TraceID string
+	Err     error
+}
+
+func (e *Error) Error() string { return e.Code }
+func (e *Error) Unwrap() error { return e.Err }
+
+type Identity struct {
+	DeviceID   string
+	PrivateKey *ecdsa.PrivateKey
+}
+type IdentityStore interface{ LoadOrCreate() (*Identity, error) }
+
+type Config struct {
+	BaseURL                 string
+	AppID                   string
+	DeviceType              string
+	ServerTrustAnchors      map[string]string
+	IdentityStore           IdentityStore
+	HTTPClient              *http.Client
+	AllowInsecureForTesting bool
+	Clock                   func() time.Time
+}
+
+type Client struct {
+	config          Config
+	baseURL         *url.URL
+	mu              sync.Mutex
+	enrollmentToken string
+	session         *session
+	nextSequence    uint64
+}
+
+type session struct {
+	keyID, sessionID              string
+	requestKey, responseKey       []byte
+	requestPrefix, responsePrefix [4]byte
+	expiresAt                     time.Time
+}
+
+type envelope struct {
+	V           int    `json:"v"`
+	Suite       string `json:"suite"`
+	KID         string `json:"kid"`
+	SID         string `json:"sid"`
+	TS          int64  `json:"ts"`
+	Seq         uint64 `json:"seq"`
+	RequestID   string `json:"rid"`
+	Method      string `json:"m"`
+	Path        string `json:"p"`
+	ContentType string `json:"cty"`
+	Status      int    `json:"st"`
+	Nonce       string `json:"nonce"`
+	Ciphertext  string `json:"ct"`
+}
+
+type protectedPayload struct {
+	Method      string            `json:"method"`
+	Path        string            `json:"path"`
+	ContentType string            `json:"contentType"`
+	Headers     map[string]string `json:"headers"`
+	Body        string            `json:"body"`
+}
+type protectedResponse struct {
+	ContentType string `json:"contentType"`
+	Body        string `json:"body"`
+}
+type Response struct {
+	Status      int
+	ContentType string
+	Body        []byte
+}
+
+func New(config Config) (*Client, error) {
+	parsed, err := url.Parse(config.BaseURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !config.AllowInsecureForTesting) {
+		return nil, errors.New("secure communication base URL must use HTTPS")
+	}
+	if config.AppID == "" || config.IdentityStore == nil || len(config.ServerTrustAnchors) == 0 {
+		return nil, errors.New("app ID, identity store, and trust anchors are required")
+	}
+	if config.DeviceType == "" {
+		config.DeviceType = "HOST"
+	}
+	if config.HTTPClient == nil {
+		config.HTTPClient = &http.Client{Timeout: 15 * time.Second}
+	}
+	if config.Clock == nil {
+		config.Clock = time.Now
+	}
+	return &Client{config: config, baseURL: parsed, nextSequence: 1}, nil
+}
+
+func (c *Client) Enroll(token string) error {
+	if strings.TrimSpace(token) == "" {
+		return errors.New("enrollment token is required")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.enrollmentToken = token
+	return nil
+}
+
+func (c *Client) Initialize(ctx context.Context) error {
+	c.mu.Lock()
+	if c.session != nil && c.config.Clock().Before(c.session.expiresAt) {
+		c.mu.Unlock()
+		return nil
+	}
+	token := c.enrollmentToken
+	c.mu.Unlock()
+	identity, err := c.config.IdentityStore.LoadOrCreate()
+	if err != nil {
+		return err
+	}
+	ephemeral, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	clientEphemeral, _ := x509.MarshalPKIXPublicKey(ephemeral.PublicKey())
+	installation, _ := x509.MarshalPKIXPublicKey(&identity.PrivateKey.PublicKey)
+	startRequest := handshakeRequest{V: 1, Suite: InternationalSuite, AppID: c.config.AppID,
+		DeviceID: identity.DeviceID, DeviceType: strings.ToUpper(c.config.DeviceType),
+		ClientEphemeralPublicKey: enc(clientEphemeral), InstallationPublicKey: enc(installation),
+		EnrollmentToken: token, Timestamp: c.config.Clock().UnixMilli()}
+	var start handshakeResponse
+	if err := c.postJSON(ctx, "/sc/v1/handshake", startRequest, &start); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.enrollmentToken = ""
+	c.mu.Unlock()
+	pinnedValue, ok := c.config.ServerTrustAnchors[start.KID]
+	if !ok {
+		return &Error{Code: "SC_HANDSHAKE_FAILED"}
+	}
+	serverIdentity, err := dec(start.ServerIdentityPublicKey)
+	if err != nil {
+		return handshakeErr(err)
+	}
+	pinned, err := dec(pinnedValue)
+	if err != nil || !hmac.Equal(serverIdentity, pinned) {
+		return &Error{Code: "SC_HANDSHAKE_FAILED"}
+	}
+	serverEphemeral, err := dec(start.ServerEphemeralPublicKey)
+	if err != nil {
+		return handshakeErr(err)
+	}
+	hash := transcriptHash(startRequest, start, clientEphemeral, installation, serverIdentity, serverEphemeral)
+	identityAny, err := x509.ParsePKIXPublicKey(serverIdentity)
+	if err != nil {
+		return handshakeErr(err)
+	}
+	serverSigning, ok := identityAny.(*ecdsa.PublicKey)
+	if !ok {
+		return &Error{Code: "SC_HANDSHAKE_FAILED"}
+	}
+	signature, err := dec(start.Signature)
+	if err != nil || !verifyP1363(serverSigning, hash[:], signature) {
+		return &Error{Code: "SC_HANDSHAKE_FAILED"}
+	}
+	peer, err := parseP256ECDHPublicKey(serverEphemeral)
+	if err != nil {
+		return handshakeErr(err)
+	}
+	secret, err := ephemeral.ECDH(peer)
+	if err != nil {
+		return handshakeErr(err)
+	}
+	material := hkdf(secret, hash[:], []byte("SC1/session/"+InternationalSuite+"/"+start.SID), 72)
+	proofDigest := sha256.Sum256(hash[:])
+	r, s, err := ecdsa.Sign(rand.Reader, identity.PrivateKey, proofDigest[:])
+	if err != nil {
+		return err
+	}
+	proof := p1363(r, s)
+	var finish struct {
+		Active    bool  `json:"active"`
+		ExpiresAt int64 `json:"expiresAt"`
+	}
+	if err := c.postJSON(ctx, "/sc/v1/handshake/finish", map[string]string{
+		"kid": start.KID, "sid": start.SID, "proof": enc(proof)}, &finish); err != nil {
+		return err
+	}
+	if !finish.Active {
+		return &Error{Code: "SC_HANDSHAKE_FAILED"}
+	}
+	current := &session{keyID: start.KID, sessionID: start.SID,
+		requestKey: append([]byte(nil), material[:32]...), responseKey: append([]byte(nil), material[32:64]...),
+		expiresAt: time.UnixMilli(finish.ExpiresAt)}
+	copy(current.requestPrefix[:], material[64:68])
+	copy(current.responsePrefix[:], material[68:72])
+	c.mu.Lock()
+	c.session = current
+	c.nextSequence = 1
+	c.mu.Unlock()
+	for i := range material {
+		material[i] = 0
+	}
+	for i := range secret {
+		secret[i] = 0
+	}
+	return nil
+}
+
+func (c *Client) Request(ctx context.Context, method, logicalPath string, protectedHeaders map[string]string, body []byte, requestID string) (*Response, error) {
+	if err := c.Initialize(ctx); err != nil {
+		return nil, err
+	}
+	c.mu.Lock()
+	current := c.session
+	sequence := c.nextSequence
+	c.nextSequence++
+	c.mu.Unlock()
+	method = strings.ToUpper(method)
+	if !validMethod(method) {
+		return nil, errors.New("invalid logical method")
+	}
+	path, err := normalizePath(logicalPath)
+	if err != nil {
+		return nil, err
+	}
+	headers := make(map[string]string, len(protectedHeaders)+1)
+	for name, value := range protectedHeaders {
+		name = strings.ToLower(name)
+		if !validHeader(name, value) {
+			return nil, errors.New("invalid protected header")
+		}
+		headers[name] = value
+	}
+	if requestID == "" {
+		requestBytes := make([]byte, 16)
+		if _, err := rand.Read(requestBytes); err != nil {
+			return nil, err
+		}
+		requestID = enc(requestBytes)
+	}
+	if !validIdentifier(requestID) {
+		return nil, errors.New("invalid request ID")
+	}
+	payload, _ := json.Marshal(protectedPayload{Method: method, Path: path,
+		ContentType: "application/json", Headers: headers, Body: enc(body)})
+	timestamp := c.config.Clock().UnixMilli()
+	nonce := makeNonce(current.requestPrefix, sequence)
+	env := envelope{V: 1, Suite: InternationalSuite, KID: current.keyID, SID: current.sessionID,
+		TS: timestamp, Seq: sequence, RequestID: requestID, Method: http.MethodPost,
+		Path: MessageEndpoint, ContentType: ProtectedMediaType, Nonce: enc(nonce)}
+	sealed, err := seal(current.requestKey, nonce, aad("request", env), payload)
+	if err != nil {
+		return nil, err
+	}
+	env.Ciphertext = enc(sealed)
+	encoded, _ := json.Marshal(env)
+	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.resolve(MessageEndpoint), bytes.NewReader(encoded))
+	request.Header.Set("Content-Type", EnvelopeMediaType)
+	request.Header.Set("Accept", EnvelopeMediaType)
+	httpResponse, err := c.config.HTTPClient.Do(request)
+	if err != nil {
+		return nil, &Error{Code: "SC_NETWORK_FAILED", Err: err}
+	}
+	defer httpResponse.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(httpResponse.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(strings.ToLower(httpResponse.Header.Get("Content-Type")), EnvelopeMediaType) {
+		var remote struct{ Code, TraceID string }
+		_ = json.Unmarshal(responseBody, &remote)
+		if remote.Code == "" {
+			remote.Code = "SC_TRANSPORT_FAILED"
+		}
+		return nil, &Error{Code: remote.Code, Status: httpResponse.StatusCode, TraceID: remote.TraceID}
+	}
+	var responseEnvelope envelope
+	if err := strictJSON(responseBody, &responseEnvelope); err != nil {
+		return nil, &Error{Code: "SC_INVALID_ENVELOPE", Err: err}
+	}
+	if responseEnvelope.V != 1 || responseEnvelope.KID != current.keyID || responseEnvelope.SID != current.sessionID || responseEnvelope.Seq != sequence || responseEnvelope.RequestID != requestID || responseEnvelope.Method != http.MethodPost || responseEnvelope.Path != MessageEndpoint || responseEnvelope.ContentType != ProtectedMediaType {
+		return nil, &Error{Code: "SC_ROUTE_MISMATCH"}
+	}
+	responseNonce := makeNonce(current.responsePrefix, sequence)
+	received, err := dec(responseEnvelope.Nonce)
+	if err != nil || !hmac.Equal(responseNonce, received) {
+		return nil, &Error{Code: "SC_INVALID_ENVELOPE"}
+	}
+	ciphertext, err := dec(responseEnvelope.Ciphertext)
+	if err != nil {
+		return nil, &Error{Code: "SC_INVALID_ENVELOPE"}
+	}
+	opened, err := open(current.responseKey, responseNonce, aad("response", responseEnvelope), ciphertext)
+	if err != nil {
+		return nil, &Error{Code: "SC_AUTHENTICATION_FAILED", Err: err}
+	}
+	var protectedResult protectedResponse
+	if err := strictJSON(opened, &protectedResult); err != nil {
+		return nil, &Error{Code: "SC_INVALID_ENVELOPE", Err: err}
+	}
+	responseBytes, err := decAllowEmpty(protectedResult.Body)
+	if err != nil || !validContentType(protectedResult.ContentType) {
+		return nil, &Error{Code: "SC_INVALID_ENVELOPE", Err: err}
+	}
+	return &Response{Status: responseEnvelope.Status,
+		ContentType: strings.ToLower(strings.Split(protectedResult.ContentType, ";")[0]),
+		Body:        responseBytes}, nil
+}
+
+func (c *Client) CloseSession() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.session = nil
+	c.nextSequence = 1
+}
+
+type handshakeRequest struct {
+	V                                                                                                    int `json:"v"`
+	Suite, AppID, DeviceID, DeviceType, ClientEphemeralPublicKey, InstallationPublicKey, EnrollmentToken string
+	Timestamp                                                                                            int64 `json:"timestamp"`
+}
+
+func (h handshakeRequest) MarshalJSON() ([]byte, error) {
+	type wire struct {
+		V                        int    `json:"v"`
+		Suite                    string `json:"suite"`
+		AppID                    string `json:"appId"`
+		DeviceID                 string `json:"deviceId"`
+		DeviceType               string `json:"deviceType"`
+		ClientEphemeralPublicKey string `json:"clientEphemeralPublicKey"`
+		InstallationPublicKey    string `json:"installationPublicKey"`
+		EnrollmentToken          string `json:"enrollmentToken,omitempty"`
+		Timestamp                int64  `json:"timestamp"`
+	}
+	return json.Marshal(wire{h.V, h.Suite, h.AppID, h.DeviceID, h.DeviceType, h.ClientEphemeralPublicKey, h.InstallationPublicKey, h.EnrollmentToken, h.Timestamp})
+}
+
+type handshakeResponse struct {
+	V                        int    `json:"v"`
+	Suite                    string `json:"suite"`
+	KID                      string `json:"kid"`
+	SID                      string `json:"sid"`
+	ServerIdentityPublicKey  string `json:"serverIdentityPublicKey"`
+	ServerEphemeralPublicKey string `json:"serverEphemeralPublicKey"`
+	CreatedAt                int64  `json:"createdAt"`
+	ExpiresAt                int64  `json:"expiresAt"`
+	Signature                string `json:"signature"`
+}
+
+func (c *Client) postJSON(ctx context.Context, path string, input, output any) error {
+	body, _ := json.Marshal(input)
+	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.resolve(path), bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response, err := c.config.HTTPClient.Do(request)
+	if err != nil {
+		return &Error{Code: "SC_NETWORK_FAILED", Err: err}
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, 256<<10))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode/100 != 2 {
+		var remote struct{ Code, TraceID string }
+		_ = json.Unmarshal(data, &remote)
+		if remote.Code == "" {
+			remote.Code = "SC_HANDSHAKE_FAILED"
+		}
+		return &Error{Code: remote.Code, Status: response.StatusCode, TraceID: remote.TraceID}
+	}
+	return strictJSON(data, output)
+}
+func (c *Client) resolve(path string) string {
+	return c.baseURL.ResolveReference(&url.URL{Path: path}).String()
+}
+func strictJSON(data []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return errors.New("trailing JSON")
+	}
+	return nil
+}
+func transcriptHash(request handshakeRequest, response handshakeResponse, clientEphemeral, installation, serverIdentity, serverEphemeral []byte) [32]byte {
+	value := strings.Join([]string{"SC1-HANDSHAKE", "1", InternationalSuite, request.AppID, request.DeviceID, request.DeviceType, enc(clientEphemeral), enc(installation), enc(serverIdentity), enc(serverEphemeral), response.KID, response.SID, fmt.Sprint(response.CreatedAt), fmt.Sprint(response.ExpiresAt)}, "\n")
+	return sha256.Sum256([]byte(value))
+}
+func verifyP1363(key *ecdsa.PublicKey, hash, signature []byte) bool {
+	if len(signature) != 64 {
+		return false
+	}
+	digest := sha256.Sum256(hash)
+	return ecdsa.Verify(key, digest[:], new(big.Int).SetBytes(signature[:32]), new(big.Int).SetBytes(signature[32:]))
+}
+
+func parseP256ECDHPublicKey(encoded []byte) (*ecdh.PublicKey, error) {
+	parsed, err := x509.ParsePKIXPublicKey(encoded)
+	if err != nil {
+		return nil, err
+	}
+	switch key := parsed.(type) {
+	case *ecdsa.PublicKey:
+		peer, conversionError := key.ECDH()
+		if conversionError != nil || peer.Curve() != ecdh.P256() {
+			return nil, errors.New("peer key is not P-256")
+		}
+		return peer, nil
+	case *ecdh.PublicKey:
+		if key.Curve() != ecdh.P256() {
+			return nil, errors.New("peer key is not P-256")
+		}
+		return key, nil
+	default:
+		return nil, errors.New("peer key is not an EC public key")
+	}
+}
+
+func p1363(r, s *big.Int) []byte {
+	out := make([]byte, 64)
+	r.FillBytes(out[:32])
+	s.FillBytes(out[32:])
+	return out
+}
+func hkdf(input, salt, info []byte, length int) []byte {
+	extract := hmac.New(sha256.New, salt)
+	extract.Write(input)
+	prk := extract.Sum(nil)
+	result := make([]byte, 0, length)
+	var previous []byte
+	for counter := byte(1); len(result) < length; counter++ {
+		expand := hmac.New(sha256.New, prk)
+		expand.Write(previous)
+		expand.Write(info)
+		expand.Write([]byte{counter})
+		previous = expand.Sum(nil)
+		result = append(result, previous...)
+	}
+	return result[:length]
+}
+func makeNonce(prefix [4]byte, sequence uint64) []byte {
+	nonce := make([]byte, 12)
+	copy(nonce, prefix[:])
+	binary.BigEndian.PutUint64(nonce[4:], sequence)
+	return nonce
+}
+func aad(direction string, e envelope) []byte {
+	parts := []string{"SC1", direction, e.Suite, e.KID, e.SID, fmt.Sprint(e.TS), fmt.Sprint(e.Seq), e.RequestID, e.Method, e.Path, e.ContentType}
+	if direction == "response" {
+		parts = append(parts, fmt.Sprint(e.Status))
+	}
+	return []byte(strings.Join(parts, "\n"))
+}
+func seal(key, nonce, aad, plaintext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return gcm.Seal(nil, nonce, plaintext, aad), nil
+}
+func open(key, nonce, aad, ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	return gcm.Open(nil, nonce, ciphertext, aad)
+}
+func normalizePath(value string) (string, error) {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || !strings.HasPrefix(value, "/") || parsed.IsAbs() || parsed.Fragment != "" {
+		return "", errors.New("invalid logical path")
+	}
+	query := parsed.Query()
+	keys := make([]string, 0, len(query))
+	for key := range query {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var pairs []string
+	for _, key := range keys {
+		values := query[key]
+		sort.Strings(values)
+		for _, v := range values {
+			pairs = append(pairs, url.QueryEscape(key)+"="+url.QueryEscape(v))
+		}
+	}
+	path := parsed.EscapedPath()
+	if len(pairs) > 0 {
+		path += "?" + strings.Join(pairs, "&")
+	}
+	return path, nil
+}
+func validHeader(name, value string) bool {
+	if name == "" || len(name) > 64 || strings.ContainsAny(value, "\r\n") || len(value) > 8192 {
+		return false
+	}
+	for _, r := range name {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+func validMethod(value string) bool {
+	if len(value) < 3 || len(value) > 16 {
+		return false
+	}
+	for _, r := range value {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+func validIdentifier(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for _, r := range value {
+		if r < 0x21 || r > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+func validContentType(value string) bool {
+	parts := strings.SplitN(value, ";", 2)
+	value = strings.ToLower(strings.TrimSpace(parts[0]))
+	pieces := strings.Split(value, "/")
+	return len(pieces) == 2 && pieces[0] != "" && pieces[1] != ""
+}
+func enc(value []byte) string          { return base64.RawURLEncoding.EncodeToString(value) }
+func dec(value string) ([]byte, error) { return base64.RawURLEncoding.DecodeString(value) }
+func decAllowEmpty(value string) ([]byte, error) {
+	if value == "" {
+		return []byte{}, nil
+	}
+	return dec(value)
+}
+func handshakeErr(err error) *Error { return &Error{Code: "SC_HANDSHAKE_FAILED", Err: err} }

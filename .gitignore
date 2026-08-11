@@ -1,0 +1,17 @@
+.DS_Store
+**/.DS_Store
+**/.idea/
+**/xcuserdata/
+**/*.xcuserstate
+**/local.properties
+**/build/
+**/.build/
+**/target/
+**/DerivedData/
+**/.gradle/
+**/node_modules/
+*.iml
+
+# Keep JavaScript release artifacts: local file dependencies consume them directly.
+!client/javascript/dist/
+!client/javascript/dist/**

@@ -1,0 +1,124 @@
+name: secure-communication-ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  go-server:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21.x"
+          cache-dependency-path: server/go/go.sum
+      - working-directory: server/go
+        run: go test -race ./...
+      - working-directory: server/go
+        run: go vet ./...
+
+  python-server:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+          cache: pip
+          cache-dependency-path: server/python/pyproject.toml
+      - working-directory: server/python
+        run: pip install '.[test]'
+      - working-directory: server/python
+        run: pytest
+      - working-directory: server/python
+        run: python -m build
+
+  spring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - name: Test and install starter
+        working-directory: server/spring-boot/spring-boot-starter-sc
+        run: mvn --batch-mode verify install
+      - name: Test demo integration
+        working-directory: server/spring-boot/SpringBootDemo
+        run: mvn --batch-mode test
+
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: client/javascript/package-lock.json
+      - working-directory: client/javascript
+        run: npm ci
+      - working-directory: client/javascript
+        run: npm test
+      - working-directory: client/javascript
+        run: npm pack --dry-run
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - working-directory: client/android
+        run: ./gradlew :secure-communication:test :secure-communication:assembleRelease
+
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - working-directory: client/ios
+        run: swift test
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate repository SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: secure-communication.spdx.json
+          upload-artifact: true
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
