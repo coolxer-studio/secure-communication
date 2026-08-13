@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -35,30 +36,35 @@ const (
 )
 
 type Error struct {
-	Code    string
-	Status  int
-	TraceID string
-	Err     error
+	Code       string
+	HTTPStatus int
+	TraceID    string
+	Cause      error
 }
 
 func (e *Error) Error() string { return e.Code }
-func (e *Error) Unwrap() error { return e.Err }
+func (e *Error) Unwrap() error { return e.Cause }
 
-type Identity struct {
-	DeviceID   string
-	PrivateKey *ecdsa.PrivateKey
+type InstallationIdentity interface {
+	DeviceID() string
+	PublicKeySPKI() ([]byte, error)
+	Sign(data []byte) ([]byte, error)
 }
-type IdentityStore interface{ LoadOrCreate() (*Identity, error) }
+type IdentityStore interface {
+	LoadOrCreate(appID string) (InstallationIdentity, error)
+}
 
 type Config struct {
-	BaseURL                 string
-	AppID                   string
-	DeviceType              string
-	ServerTrustAnchors      map[string]string
-	IdentityStore           IdentityStore
-	HTTPClient              *http.Client
-	AllowInsecureForTesting bool
-	Clock                   func() time.Time
+	BaseURL                         string
+	AppID                           string
+	DeviceType                      string
+	ServerTrustAnchors              map[string]string
+	IdentityStore                   IdentityStore
+	HTTPClient                      *http.Client
+	RequestTimeout                  time.Duration
+	AllowedClockSkew                time.Duration
+	AllowInsecureLoopbackForTesting bool
+	Clock                           func() time.Time
 }
 
 type Client struct {
@@ -68,6 +74,13 @@ type Client struct {
 	enrollmentToken string
 	session         *session
 	nextSequence    uint64
+	initializing    *initialization
+	generation      uint64
+}
+
+type initialization struct {
+	done chan struct{}
+	err  error
 }
 
 type session struct {
@@ -110,20 +123,51 @@ type Response struct {
 	Body        []byte
 }
 
+type Request struct {
+	Method           string
+	LogicalPath      string
+	ContentType      string
+	ProtectedHeaders map[string]string
+	Body             []byte
+	RequestID        string
+}
+
 func New(config Config) (*Client, error) {
 	parsed, err := url.Parse(config.BaseURL)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !config.AllowInsecureForTesting) {
+	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		(parsed.Scheme != "https" && !(config.AllowInsecureLoopbackForTesting &&
+			parsed.Scheme == "http" && isLoopback(parsed.Hostname()))) {
 		return nil, errors.New("secure communication base URL must use HTTPS")
 	}
-	if config.AppID == "" || config.IdentityStore == nil || len(config.ServerTrustAnchors) == 0 {
+	if !validAppID(config.AppID) || config.IdentityStore == nil || len(config.ServerTrustAnchors) == 0 {
 		return nil, errors.New("app ID, identity store, and trust anchors are required")
 	}
 	if config.DeviceType == "" {
 		config.DeviceType = "HOST"
 	}
-	if config.HTTPClient == nil {
-		config.HTTPClient = &http.Client{Timeout: 15 * time.Second}
+	config.DeviceType = strings.ToUpper(config.DeviceType)
+	if !validDeviceType(config.DeviceType) {
+		return nil, errors.New("invalid device type")
 	}
+	if config.RequestTimeout == 0 {
+		config.RequestTimeout = 15 * time.Second
+	}
+	if config.RequestTimeout < 0 {
+		return nil, errors.New("request timeout must be positive")
+	}
+	if config.AllowedClockSkew == 0 {
+		config.AllowedClockSkew = 2 * time.Minute
+	}
+	if config.AllowedClockSkew < 0 {
+		return nil, errors.New("allowed clock skew must not be negative")
+	}
+	if config.HTTPClient == nil {
+		config.HTTPClient = &http.Client{}
+	}
+	transport := *config.HTTPClient
+	transport.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	transport.Timeout = 0
+	config.HTTPClient = &transport
 	if config.Clock == nil {
 		config.Clock = time.Now
 	}
@@ -131,6 +175,9 @@ func New(config Config) (*Client, error) {
 }
 
 func (c *Client) Enroll(token string) error {
+	if c.config.DeviceType == "H5" {
+		return &Error{Code: "SC_ENROLLMENT_NOT_SUPPORTED"}
+	}
 	if strings.TrimSpace(token) == "" {
 		return errors.New("enrollment token is required")
 	}
@@ -141,34 +188,70 @@ func (c *Client) Enroll(token string) error {
 }
 
 func (c *Client) Initialize(ctx context.Context) error {
+	waitCtx, cancel := c.executionContext(ctx)
+	defer cancel()
 	c.mu.Lock()
 	if c.session != nil && c.config.Clock().Before(c.session.expiresAt) {
 		c.mu.Unlock()
 		return nil
 	}
+	if c.initializing == nil {
+		state := &initialization{done: make(chan struct{})}
+		c.initializing = state
+		generation := c.generation
+		go c.runInitialize(state, generation)
+	}
+	state := c.initializing
+	c.mu.Unlock()
+	select {
+	case <-waitCtx.Done():
+		return contextError(waitCtx.Err())
+	case <-state.done:
+		return state.err
+	}
+}
+
+func (c *Client) runInitialize(state *initialization, generation uint64) {
+	ctx, cancel := context.WithTimeout(context.Background(), c.config.RequestTimeout)
+	defer cancel()
+	err := c.performInitialize(ctx, generation)
+	c.mu.Lock()
+	state.err = err
+	if c.initializing == state {
+		c.initializing = nil
+	}
+	close(state.done)
+	c.mu.Unlock()
+}
+
+func (c *Client) performInitialize(ctx context.Context, generation uint64) error {
+	c.mu.Lock()
 	token := c.enrollmentToken
 	c.mu.Unlock()
-	identity, err := c.config.IdentityStore.LoadOrCreate()
+	identity, err := c.config.IdentityStore.LoadOrCreate(c.config.AppID)
 	if err != nil {
-		return err
+		return &Error{Code: "SC_IDENTITY_FAILED", Cause: err}
 	}
 	ephemeral, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {
 		return err
 	}
 	clientEphemeral, _ := x509.MarshalPKIXPublicKey(ephemeral.PublicKey())
-	installation, _ := x509.MarshalPKIXPublicKey(&identity.PrivateKey.PublicKey)
+	installation, err := identity.PublicKeySPKI()
+	if err != nil {
+		return &Error{Code: "SC_IDENTITY_FAILED", Cause: err}
+	}
 	startRequest := handshakeRequest{V: 1, Suite: InternationalSuite, AppID: c.config.AppID,
-		DeviceID: identity.DeviceID, DeviceType: strings.ToUpper(c.config.DeviceType),
+		DeviceID: identity.DeviceID(), DeviceType: c.config.DeviceType,
 		ClientEphemeralPublicKey: enc(clientEphemeral), InstallationPublicKey: enc(installation),
 		EnrollmentToken: token, Timestamp: c.config.Clock().UnixMilli()}
 	var start handshakeResponse
 	if err := c.postJSON(ctx, "/sc/v1/handshake", startRequest, &start); err != nil {
 		return err
 	}
-	c.mu.Lock()
-	c.enrollmentToken = ""
-	c.mu.Unlock()
+	if start.V != 1 || start.Suite != InternationalSuite {
+		return &Error{Code: "SC_HANDSHAKE_FAILED"}
+	}
 	pinnedValue, ok := c.config.ServerTrustAnchors[start.KID]
 	if !ok {
 		return &Error{Code: "SC_HANDSHAKE_FAILED"}
@@ -207,12 +290,10 @@ func (c *Client) Initialize(ctx context.Context) error {
 		return handshakeErr(err)
 	}
 	material := hkdf(secret, hash[:], []byte("SC1/session/"+InternationalSuite+"/"+start.SID), 72)
-	proofDigest := sha256.Sum256(hash[:])
-	r, s, err := ecdsa.Sign(rand.Reader, identity.PrivateKey, proofDigest[:])
+	proof, err := identity.Sign(hash[:])
 	if err != nil {
-		return err
+		return &Error{Code: "SC_IDENTITY_FAILED", Cause: err}
 	}
-	proof := p1363(r, s)
 	var finish struct {
 		Active    bool  `json:"active"`
 		ExpiresAt int64 `json:"expiresAt"`
@@ -230,8 +311,15 @@ func (c *Client) Initialize(ctx context.Context) error {
 	copy(current.requestPrefix[:], material[64:68])
 	copy(current.responsePrefix[:], material[68:72])
 	c.mu.Lock()
+	if c.generation != generation {
+		c.mu.Unlock()
+		return &Error{Code: "SC_REQUEST_CANCELLED"}
+	}
 	c.session = current
 	c.nextSequence = 1
+	if c.enrollmentToken == token {
+		c.enrollmentToken = ""
+	}
 	c.mu.Unlock()
 	for i := range material {
 		material[i] = 0
@@ -242,25 +330,45 @@ func (c *Client) Initialize(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) Request(ctx context.Context, method, logicalPath string, protectedHeaders map[string]string, body []byte, requestID string) (*Response, error) {
-	if err := c.Initialize(ctx); err != nil {
+func (c *Client) Request(ctx context.Context, input Request) (*Response, error) {
+	method := strings.ToUpper(input.Method)
+	if method == "" {
+		method = http.MethodGet
+	}
+	if !validMethod(method) {
+		return nil, errors.New("invalid logical method")
+	}
+	path, err := normalizePath(input.LogicalPath)
+	if err != nil {
+		return nil, err
+	}
+	contentType := input.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if !validContentType(contentType) {
+		return nil, errors.New("invalid content type")
+	}
+	requestID := input.RequestID
+	if requestID != "" && !validIdentifier(requestID) {
+		return nil, errors.New("invalid request ID")
+	}
+	executionCtx, cancel := c.executionContext(ctx)
+	defer cancel()
+	if err := c.Initialize(executionCtx); err != nil {
 		return nil, err
 	}
 	c.mu.Lock()
 	current := c.session
+	if c.nextSequence == 0 || c.nextSequence > 9_007_199_254_740_991 {
+		c.mu.Unlock()
+		return nil, &Error{Code: "SC_SEQUENCE_EXHAUSTED"}
+	}
 	sequence := c.nextSequence
 	c.nextSequence++
 	c.mu.Unlock()
-	method = strings.ToUpper(method)
-	if !validMethod(method) {
-		return nil, errors.New("invalid logical method")
-	}
-	path, err := normalizePath(logicalPath)
-	if err != nil {
-		return nil, err
-	}
-	headers := make(map[string]string, len(protectedHeaders)+1)
-	for name, value := range protectedHeaders {
+	headers := make(map[string]string, len(input.ProtectedHeaders))
+	for name, value := range input.ProtectedHeaders {
 		name = strings.ToLower(name)
 		if !validHeader(name, value) {
 			return nil, errors.New("invalid protected header")
@@ -278,7 +386,7 @@ func (c *Client) Request(ctx context.Context, method, logicalPath string, protec
 		return nil, errors.New("invalid request ID")
 	}
 	payload, _ := json.Marshal(protectedPayload{Method: method, Path: path,
-		ContentType: "application/json", Headers: headers, Body: enc(body)})
+		ContentType: strings.ToLower(strings.Split(contentType, ";")[0]), Headers: headers, Body: enc(input.Body)})
 	timestamp := c.config.Clock().UnixMilli()
 	nonce := makeNonce(current.requestPrefix, sequence)
 	env := envelope{V: 1, Suite: InternationalSuite, KID: current.keyID, SID: current.sessionID,
@@ -290,12 +398,12 @@ func (c *Client) Request(ctx context.Context, method, logicalPath string, protec
 	}
 	env.Ciphertext = enc(sealed)
 	encoded, _ := json.Marshal(env)
-	request, _ := http.NewRequestWithContext(ctx, http.MethodPost, c.resolve(MessageEndpoint), bytes.NewReader(encoded))
+	request, _ := http.NewRequestWithContext(executionCtx, http.MethodPost, c.resolve(MessageEndpoint), bytes.NewReader(encoded))
 	request.Header.Set("Content-Type", EnvelopeMediaType)
 	request.Header.Set("Accept", EnvelopeMediaType)
 	httpResponse, err := c.config.HTTPClient.Do(request)
 	if err != nil {
-		return nil, &Error{Code: "SC_NETWORK_FAILED", Err: err}
+		return nil, contextOrNetworkError(executionCtx, err)
 	}
 	defer httpResponse.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(httpResponse.Body, 2<<20))
@@ -308,14 +416,28 @@ func (c *Client) Request(ctx context.Context, method, logicalPath string, protec
 		if remote.Code == "" {
 			remote.Code = "SC_TRANSPORT_FAILED"
 		}
-		return nil, &Error{Code: remote.Code, Status: httpResponse.StatusCode, TraceID: remote.TraceID}
+		result := &Error{Code: remote.Code, HTTPStatus: httpResponse.StatusCode, TraceID: remote.TraceID}
+		if remote.Code == "SC_UNKNOWN_SESSION" {
+			c.CloseSession()
+		}
+		return nil, result
 	}
 	var responseEnvelope envelope
 	if err := strictJSON(responseBody, &responseEnvelope); err != nil {
-		return nil, &Error{Code: "SC_INVALID_ENVELOPE", Err: err}
+		return nil, &Error{Code: "SC_INVALID_ENVELOPE", Cause: err}
 	}
-	if responseEnvelope.V != 1 || responseEnvelope.KID != current.keyID || responseEnvelope.SID != current.sessionID || responseEnvelope.Seq != sequence || responseEnvelope.RequestID != requestID || responseEnvelope.Method != http.MethodPost || responseEnvelope.Path != MessageEndpoint || responseEnvelope.ContentType != ProtectedMediaType {
+	if responseEnvelope.KID != current.keyID || responseEnvelope.SID != current.sessionID {
+		c.CloseSession()
+		return nil, &Error{Code: "SC_UNKNOWN_SESSION"}
+	}
+	if responseEnvelope.V != 1 || responseEnvelope.Seq != sequence || responseEnvelope.RequestID != requestID || responseEnvelope.Method != http.MethodPost || responseEnvelope.Path != MessageEndpoint || responseEnvelope.ContentType != ProtectedMediaType {
 		return nil, &Error{Code: "SC_ROUTE_MISMATCH"}
+	}
+	if responseEnvelope.Suite != InternationalSuite || responseEnvelope.Status < 100 || responseEnvelope.Status > 599 {
+		return nil, &Error{Code: "SC_INVALID_ENVELOPE"}
+	}
+	if absDuration(c.config.Clock().Sub(time.UnixMilli(responseEnvelope.TS))) > c.config.AllowedClockSkew {
+		return nil, &Error{Code: "SC_REQUEST_EXPIRED"}
 	}
 	responseNonce := makeNonce(current.responsePrefix, sequence)
 	received, err := dec(responseEnvelope.Nonce)
@@ -328,15 +450,15 @@ func (c *Client) Request(ctx context.Context, method, logicalPath string, protec
 	}
 	opened, err := open(current.responseKey, responseNonce, aad("response", responseEnvelope), ciphertext)
 	if err != nil {
-		return nil, &Error{Code: "SC_AUTHENTICATION_FAILED", Err: err}
+		return nil, &Error{Code: "SC_AUTHENTICATION_FAILED", Cause: err}
 	}
 	var protectedResult protectedResponse
 	if err := strictJSON(opened, &protectedResult); err != nil {
-		return nil, &Error{Code: "SC_INVALID_ENVELOPE", Err: err}
+		return nil, &Error{Code: "SC_INVALID_ENVELOPE", Cause: err}
 	}
 	responseBytes, err := decAllowEmpty(protectedResult.Body)
 	if err != nil || !validContentType(protectedResult.ContentType) {
-		return nil, &Error{Code: "SC_INVALID_ENVELOPE", Err: err}
+		return nil, &Error{Code: "SC_INVALID_ENVELOPE", Cause: err}
 	}
 	return &Response{Status: responseEnvelope.Status,
 		ContentType: strings.ToLower(strings.Split(protectedResult.ContentType, ";")[0]),
@@ -348,6 +470,7 @@ func (c *Client) CloseSession() {
 	defer c.mu.Unlock()
 	c.session = nil
 	c.nextSequence = 1
+	c.generation++
 }
 
 type handshakeRequest struct {
@@ -389,7 +512,7 @@ func (c *Client) postJSON(ctx context.Context, path string, input, output any) e
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.config.HTTPClient.Do(request)
 	if err != nil {
-		return &Error{Code: "SC_NETWORK_FAILED", Err: err}
+		return contextOrNetworkError(ctx, err)
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 256<<10))
@@ -402,7 +525,7 @@ func (c *Client) postJSON(ctx context.Context, path string, input, output any) e
 		if remote.Code == "" {
 			remote.Code = "SC_HANDSHAKE_FAILED"
 		}
-		return &Error{Code: remote.Code, Status: response.StatusCode, TraceID: remote.TraceID}
+		return &Error{Code: remote.Code, HTTPStatus: response.StatusCode, TraceID: remote.TraceID}
 	}
 	return strictJSON(data, output)
 }
@@ -583,4 +706,62 @@ func decAllowEmpty(value string) ([]byte, error) {
 	}
 	return dec(value)
 }
-func handshakeErr(err error) *Error { return &Error{Code: "SC_HANDSHAKE_FAILED", Err: err} }
+func handshakeErr(err error) *Error { return &Error{Code: "SC_HANDSHAKE_FAILED", Cause: err} }
+
+func (c *Client) executionContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, c.config.RequestTimeout)
+}
+
+func contextError(err error) *Error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return &Error{Code: "SC_REQUEST_TIMEOUT", Cause: err}
+	}
+	return &Error{Code: "SC_REQUEST_CANCELLED", Cause: err}
+}
+
+func contextOrNetworkError(ctx context.Context, err error) *Error {
+	if ctx.Err() != nil {
+		return contextError(ctx.Err())
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return contextError(err)
+	}
+	return &Error{Code: "SC_NETWORK_FAILED", Cause: err}
+}
+
+func validDeviceType(value string) bool {
+	switch value {
+	case "H5", "HOST", "SERVER", "ANDROID", "IOS", "EMULATOR":
+		return true
+	default:
+		return false
+	}
+}
+
+func validAppID(value string) bool {
+	if len(value) < 1 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z' ||
+			character >= '0' && character <= '9' || strings.ContainsRune("._:@/-", character)) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLoopback(host string) bool {
+	ip := net.ParseIP(host)
+	return strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback())
+}
+
+func absDuration(value time.Duration) time.Duration {
+	if value < 0 {
+		return -value
+	}
+	return value
+}

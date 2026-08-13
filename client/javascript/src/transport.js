@@ -103,9 +103,13 @@ function newRequestId() {
   return base64Url(globalThis.crypto.getRandomValues(new Uint8Array(16)));
 }
 
-function requireHttps(baseUrl, allowInsecureForTesting) {
+function requireHttps(baseUrl, allowInsecureLoopbackForTesting) {
   var parsed = new URL(baseUrl);
-  if (parsed.protocol !== 'https:' && !allowInsecureForTesting) {
+  var host = parsed.hostname.toLowerCase();
+  var loopback = host === 'localhost' || host === '[::1]' || host === '::1'
+    || /^127(?:\.\d{1,3}){3}$/.test(host);
+  if (parsed.protocol !== 'https:'
+      && !(allowInsecureLoopbackForTesting && parsed.protocol === 'http:' && loopback)) {
     throw new TypeError('baseUrl must use HTTPS');
   }
   return parsed.toString().replace(/\/+$/, '');
@@ -140,13 +144,13 @@ export function createSecureFetch(configuration) {
     throw new TypeError('fetch implementation is required');
   }
   var baseUrl = requireHttps(
-    configuration.baseUrl, configuration.allowInsecureForTesting === true);
+    configuration.baseUrl, configuration.allowInsecureLoopbackForTesting === true);
   var endpoint = baseUrl + (configuration.endpoint || '/sc/v1/message');
 
   return async function secureFetch(path, init) {
     init = init || {};
     var method = String(init.method || 'GET').toUpperCase();
-    var contentType = getHeader(init.headers, 'content-type')
+    var contentType = init.contentType || getHeader(init.headers, 'content-type')
       || 'application/octet-stream';
     var requestId = init.requestId || newRequestId();
     var payloadInit = Object.assign({}, init, {
@@ -184,7 +188,7 @@ export function createSecureFetch(configuration) {
       throw new SecureCommunicationError(
         errorBody.code || 'SC_TRANSPORT_FAILED',
         errorBody.message || 'Secure transport failed',
-        { status: response.status, traceId: errorBody.traceId });
+        { httpStatus: response.status, traceId: errorBody.traceId });
     }
     var decoded = await configuration.codec.decodeResponse(responseText, {
       sequence: requestEnvelope.seq,
@@ -200,7 +204,7 @@ export function createSecureFetch(configuration) {
         return utf8Decode(Array.prototype.slice.call(protectedResult.body));
       },
       json: function json() {
-        return JSON.parse(decoded.text());
+        return JSON.parse(utf8Decode(Array.prototype.slice.call(protectedResult.body)));
       }
     };
   };

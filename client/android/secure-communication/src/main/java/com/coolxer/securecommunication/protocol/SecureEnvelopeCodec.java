@@ -1,4 +1,4 @@
-package com.coolxer.securecommunication.protocol;
+package com.coolxer.securecommunication.internal.protocol;
 
 import android.util.Base64;
 
@@ -60,7 +60,7 @@ public final class SecureEnvelopeCodec {
         }
         long sequence = sequences.next(session.getSessionId());
         String method = normalizeMethod(request.getMethod());
-        String path = normalizePath(request.getPath());
+        String path = normalizePath(request.getLogicalPath());
         String contentType = normalizeContentType(request.getContentType());
         String requestId = request.getRequestId();
         if (!requestId.matches("[\\x21-\\x7e]{1,128}")) {
@@ -217,7 +217,7 @@ public final class SecureEnvelopeCodec {
             }
             return new JSONObject()
                     .put("method", normalizeMethod(request.getMethod()))
-                    .put("path", normalizePath(request.getPath()))
+                    .put("path", normalizePath(request.getLogicalPath()))
                     .put("contentType", normalizeContentType(request.getContentType()))
                     .put("headers", headers)
                     .put("body", encode(request.getBody()))
@@ -355,7 +355,7 @@ public final class SecureEnvelopeCodec {
         for (int index = 0; index < value.length(); index += 1) {
             char current = value.charAt(index);
             if (current == '%') {
-                if (index + 2 >= value.length
+                if (index + 2 >= value.length()
                         || Character.digit(value.charAt(index + 1), 16) < 0
                         || Character.digit(value.charAt(index + 2), 16) < 0) {
                     throw new IllegalArgumentException("Invalid percent encoding");

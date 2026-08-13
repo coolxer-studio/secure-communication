@@ -11,7 +11,7 @@ public final class SecureResponse {
     public SecureResponse(int status, String contentType, byte[] body) {
         this.status = status;
         this.contentType = contentType;
-        this.body = Arrays.copyOf(body, body.length);
+        this.body = body == null ? new byte[0] : Arrays.copyOf(body, body.length);
     }
 
     public int getStatus() {

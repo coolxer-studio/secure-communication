@@ -4,6 +4,22 @@ import XCTest
 @testable import SecureCommunication
 
 final class EnvelopeCodecTests: XCTestCase {
+    func testUnifiedRequestAndErrorModels() throws {
+        let request = try SecureRequest(logicalPath: "/health")
+        XCTAssertEqual(request.method, "GET")
+        XCTAssertEqual(request.contentType, "application/octet-stream")
+        XCTAssertTrue(request.body.isEmpty)
+        XCTAssertNil(request.requestID)
+
+        let cause = URLError(.timedOut)
+        let error = SecureError(
+            code: "SC_TEST", httpStatus: 409, traceID: "trace", cause: cause)
+        XCTAssertEqual(error.code, "SC_TEST")
+        XCTAssertEqual(error.httpStatus, 409)
+        XCTAssertEqual(error.traceID, "trace")
+        XCTAssertNotNil(error.cause)
+    }
+
     func testCrossLanguageRequestVector() async throws {
         let key = Data((0..<32).map(UInt8.init))
         let session = try SecureSession(
@@ -21,9 +37,9 @@ final class EnvelopeCodecTests: XCTestCase {
             session: session,
             sequences: PersistentSequenceStore(defaults: defaults),
             clock: { Date(timeIntervalSince1970: 1_785_283_200) })
-        let encoded = try await codec.encode(SecureRequest(
+        let encoded = try await codec.encode(try SecureRequest(
             method: "post",
-            path: "/api/messages?x=1&lang=zh",
+            logicalPath: "/api/messages?x=1&lang=zh",
             contentType: "application/json; charset=utf-8",
             body: #"{"message":"你好🌍"}"#.data(using: .utf8)!,
             requestID: "request-0001"))

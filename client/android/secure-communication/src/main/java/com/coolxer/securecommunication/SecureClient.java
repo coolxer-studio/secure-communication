@@ -1,32 +1,36 @@
 package com.coolxer.securecommunication;
 
 import android.content.Context;
-import android.content.SharedPreferences;
+import android.os.Looper;
 import android.util.Base64;
 
 import com.coolxer.securecommunication.identity.AndroidIdentityKeyStore;
-import com.coolxer.securecommunication.protocol.InternationalHandshake;
-import com.coolxer.securecommunication.protocol.SecureEnvelopeCodec;
-import com.coolxer.securecommunication.protocol.SecureSession;
-import com.coolxer.securecommunication.protocol.SequenceStore;
+import com.coolxer.securecommunication.internal.protocol.InternationalHandshake;
+import com.coolxer.securecommunication.internal.protocol.SecureEnvelopeCodec;
+import com.coolxer.securecommunication.internal.protocol.SecureSession;
+import com.coolxer.securecommunication.internal.protocol.SequenceStore;
+import com.coolxer.securecommunication.internal.transport.SecureTransportException;
 
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.MessageDigest;
 import java.security.PublicKey;
-import java.security.Signature;
 import java.security.spec.X509EncodedKeySpec;
-import java.util.Arrays;
 import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+import okhttp3.Call;
 import okhttp3.ConnectionSpec;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
@@ -37,99 +41,122 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 import okhttp3.TlsVersion;
 
-/** High-level protocol v1 client. It never retries business requests. */
+/** Unified protocol v1 client API. Business requests are never retried. */
 public final class SecureClient {
-    public static final String SUITE = SecureSession.INTERNATIONAL_SUITE;
+    private static final String SUITE = SecureSession.INTERNATIONAL_SUITE;
     private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
-    private final Context context;
-    private final Config config;
+    private final Object stateLock = new Object();
+    private final SecureClientConfig config;
     private final OkHttpClient transport;
     private final HttpUrl baseUrl;
-    private final KeyPair installationIdentity;
-    private final String deviceId;
+    private final IdentityStore identityStore;
+    private final ExecutorService executor = Executors.newCachedThreadPool();
     private String enrollmentToken;
     private SecureSession session;
     private SecureCommunicationClient messageClient;
+    private FutureTask<Void> initializeTask;
     private long nextSequence;
+    private long generation;
 
-    public SecureClient(Context context, Config config) throws SecureError {
-        if (context == null || config == null || config.appId == null
-                || config.appId.isEmpty() || config.serverTrustAnchors.isEmpty()) {
+    public SecureClient(Context context, SecureClientConfig config) throws SecureError {
+        if (context == null || config == null) {
             throw new SecureError("SC_INVALID_CONFIGURATION", "Invalid client configuration");
         }
-        HttpUrl parsed = HttpUrl.parse(config.baseUrl);
-        if (parsed == null || !"https".equals(parsed.scheme())) {
-            throw new SecureError("SC_INVALID_CONFIGURATION", "baseUrl must use HTTPS");
-        }
-        this.context = context.getApplicationContext();
         this.config = config;
-        this.baseUrl = parsed;
-        ConnectionSpec tls = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-                .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3).build();
-        this.transport = (config.httpClient == null ? new OkHttpClient() : config.httpClient)
-                .newBuilder()
+        this.baseUrl = HttpUrl.parse(config.getBaseUrl());
+        this.identityStore = config.getIdentityStore() == null
+                ? new AndroidIdentityKeyStore(context) : config.getIdentityStore();
+        OkHttpClient base = config.getHttpClient() == null
+                ? new OkHttpClient() : config.getHttpClient();
+        OkHttpClient.Builder transportBuilder = base.newBuilder()
                 .retryOnConnectionFailure(false)
-                .connectTimeout(config.connectTimeoutMillis, TimeUnit.MILLISECONDS)
-                .readTimeout(config.readTimeoutMillis, TimeUnit.MILLISECONDS)
-                .writeTimeout(config.writeTimeoutMillis, TimeUnit.MILLISECONDS)
-                .connectionSpecs(Collections.singletonList(tls))
-                .build();
-        try {
-            this.installationIdentity = new AndroidIdentityKeyStore().getOrCreate(
-                    "sc1.installation." + config.appId);
-        } catch (Exception exception) {
-            throw new SecureError("SC_IDENTITY_FAILED", "Installation identity is unavailable",
-                    0, null, exception);
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .callTimeout(config.getRequestTimeoutMillis(), TimeUnit.MILLISECONDS);
+        if ("https".equals(baseUrl.scheme())) {
+            ConnectionSpec tls = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+                    .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3).build();
+            transportBuilder.connectionSpecs(Collections.singletonList(tls));
+        } else {
+            transportBuilder.connectionSpecs(Collections.singletonList(ConnectionSpec.CLEARTEXT));
         }
-        SharedPreferences preferences = this.context.getSharedPreferences(
-                "secure-communication-v1", Context.MODE_PRIVATE);
-        String storedDeviceId = preferences.getString("device." + config.appId, null);
-        if (storedDeviceId == null) {
-            storedDeviceId = UUID.randomUUID().toString();
-            if (!preferences.edit().putString("device." + config.appId, storedDeviceId).commit()) {
-                throw new SecureError("SC_IDENTITY_FAILED", "Device identity could not be persisted");
-            }
-        }
-        this.deviceId = storedDeviceId;
+        this.transport = transportBuilder.build();
     }
 
-    public synchronized void enroll(String token) throws SecureError {
+    public void enroll(String token) throws SecureError {
+        if ("H5".equals(config.getDeviceType())) {
+            throw new SecureError("SC_ENROLLMENT_NOT_SUPPORTED", "H5 enrollment uses Origin policy");
+        }
         if (token == null || token.trim().isEmpty()) {
             throw new SecureError("SC_ENROLLMENT_REQUIRED", "Enrollment token is required");
         }
-        enrollmentToken = token;
+        synchronized (stateLock) { enrollmentToken = token; }
     }
 
-    public synchronized void initialize() throws SecureError {
-        if (session != null && System.currentTimeMillis() < session.getExpiresAtEpochMillis()) {
-            return;
+    public void initialize() throws SecureError {
+        rejectMainThread();
+        FutureTask<Void> task;
+        synchronized (stateLock) {
+            if (session != null && System.currentTimeMillis() < session.getExpiresAtEpochMillis()) {
+                return;
+            }
+            if (initializeTask == null) {
+                final long expectedGeneration = generation;
+                initializeTask = new FutureTask<>(() -> {
+                    performInitialize(expectedGeneration);
+                    return null;
+                });
+                executor.execute(initializeTask);
+            }
+            task = initializeTask;
         }
-        KeyPair ephemeral = InternationalHandshake.createEphemeralKeyPair();
-        long timestamp = System.currentTimeMillis();
-        JSONObject start = new JSONObject();
         try {
-            start.put("v", 1).put("suite", SUITE).put("appId", config.appId)
-                    .put("deviceId", deviceId).put("deviceType", config.deviceType)
+            task.get();
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new SecureError("SC_REQUEST_CANCELLED", "Initialization wait was cancelled",
+                    0, null, exception);
+        } catch (ExecutionException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof SecureError) throw (SecureError) cause;
+            throw handshakeFailure(cause);
+        } finally {
+            synchronized (stateLock) {
+                if (initializeTask == task && task.isDone()) initializeTask = null;
+            }
+        }
+    }
+
+    private void performInitialize(long expectedGeneration) throws SecureError {
+        String token;
+        synchronized (stateLock) { token = enrollmentToken; }
+        try {
+            InstallationIdentity identity = identityStore.loadOrCreate(config.getAppId());
+            KeyPair ephemeral = InternationalHandshake.createEphemeralKeyPair();
+            JSONObject start = new JSONObject()
+                    .put("v", 1).put("suite", SUITE).put("appId", config.getAppId())
+                    .put("deviceId", identity.deviceId()).put("deviceType", config.getDeviceType())
                     .put("clientEphemeralPublicKey", encode(ephemeral.getPublic().getEncoded()))
-                    .put("installationPublicKey", encode(installationIdentity.getPublic().getEncoded()))
-                    .put("enrollmentToken", enrollmentToken == null ? JSONObject.NULL : enrollmentToken)
-                    .put("timestamp", timestamp);
+                    .put("installationPublicKey", encode(identity.publicKeySpki()))
+                    .put("enrollmentToken", token == null ? JSONObject.NULL : token)
+                    .put("timestamp", System.currentTimeMillis());
             JSONObject response = postJson("/sc/v1/handshake", start);
             if (response.getInt("v") != 1 || !SUITE.equals(response.getString("suite"))) {
                 throw handshakeFailure(null);
             }
             String keyId = response.getString("kid");
-            byte[] pinned = decode(config.serverTrustAnchors.get(keyId));
+            byte[] pinned = decode(config.getServerTrustAnchors().get(keyId));
             byte[] serverIdentity = decode(response.getString("serverIdentityPublicKey"));
-            if (pinned == null || !MessageDigest.isEqual(pinned, serverIdentity)) {
+            if (pinned == null || serverIdentity == null
+                    || !MessageDigest.isEqual(pinned, serverIdentity)) {
                 throw handshakeFailure(null);
             }
             byte[] serverEphemeral = decode(response.getString("serverEphemeralPublicKey"));
             String sessionId = response.getString("sid");
             long createdAt = response.getLong("createdAt");
             long expiresAt = response.getLong("expiresAt");
-            byte[] transcriptHash = transcriptHash(start, serverIdentity, serverEphemeral,
-                    keyId, sessionId, createdAt, expiresAt);
+            byte[] transcriptHash = transcriptHash(start, identity.deviceId(), serverIdentity,
+                    serverEphemeral, keyId, sessionId, createdAt, expiresAt);
             PublicKey identityKey = ecPublicKey(serverIdentity);
             if (!InternationalHandshake.verifyTranscriptSignature(
                     identityKey, transcriptHash, decode(response.getString("signature")))) {
@@ -138,63 +165,103 @@ public final class SecureClient {
             SecureSession established = InternationalHandshake.deriveSession(
                     keyId, sessionId, ephemeral.getPrivate(), ecPublicKey(serverEphemeral),
                     transcriptHash, expiresAt);
-            JSONObject finish = new JSONObject()
+            JSONObject completed = postJson("/sc/v1/handshake/finish", new JSONObject()
                     .put("kid", keyId).put("sid", sessionId)
-                    .put("proof", encode(signP1363(installationIdentity, transcriptHash)));
-            JSONObject completed = postJson("/sc/v1/handshake/finish", finish);
-            if (!completed.getBoolean("active")) {
-                throw handshakeFailure(null);
-            }
-            enrollmentToken = null;
-            session = established;
-            nextSequence = 0;
-            SequenceStore sequences = ignored -> {
-                synchronized (SecureClient.this) {
-                    if (nextSequence == Long.MAX_VALUE) {
-                        throw new SecureError("SC_SEQUENCE_EXHAUSTED", "Session sequence is exhausted");
-                    }
-                    return ++nextSequence;
+                    .put("proof", encode(identity.sign(transcriptHash))));
+            if (!completed.getBoolean("active")) throw handshakeFailure(null);
+            synchronized (stateLock) {
+                if (generation != expectedGeneration) {
+                    throw new SecureError("SC_REQUEST_CANCELLED", "Initialization was invalidated");
                 }
-            };
-            SecureEnvelopeCodec codec = new SecureEnvelopeCodec(
-                    established, sequences, System::currentTimeMillis, config.allowedClockSkewMillis);
-            messageClient = new SecureCommunicationClient(baseUrl, transport, codec);
+                session = established;
+                nextSequence = 0;
+                SequenceStore sequences = ignored -> {
+                    synchronized (stateLock) {
+                        if (nextSequence == Long.MAX_VALUE) {
+                            throw new SecureError("SC_SEQUENCE_EXHAUSTED", "Session sequence is exhausted");
+                        }
+                        return ++nextSequence;
+                    }
+                };
+                SecureEnvelopeCodec codec = new SecureEnvelopeCodec(established, sequences,
+                        System::currentTimeMillis, config.getAllowedClockSkewMillis());
+                messageClient = new SecureCommunicationClient(baseUrl, transport, codec);
+                if (equalToken(enrollmentToken, token)) enrollmentToken = null;
+            }
         } catch (SecureError error) {
-            closeSession();
+            clearFailedSession(expectedGeneration);
             throw error;
+        } catch (SocketTimeoutException exception) {
+            clearFailedSession(expectedGeneration);
+            throw new SecureError("SC_REQUEST_TIMEOUT", "Secure handshake timed out",
+                    0, null, exception);
         } catch (Exception exception) {
-            closeSession();
+            clearFailedSession(expectedGeneration);
             throw handshakeFailure(exception);
         }
     }
 
-    public SecureResponse request(String method, String logicalPath,
-            Map<String, String> protectedHeaders, byte[] body, String requestId)
+    public SecureResponse request(SecureRequest request) throws SecureError {
+        return executeRequest(request, null);
+    }
+
+    public SecureCall newCall(SecureRequest request) {
+        if (request == null) throw new IllegalArgumentException("request is required");
+        return new RealSecureCall(request);
+    }
+
+    private SecureResponse executeRequest(SecureRequest request, RealSecureCall owner)
             throws SecureError {
+        if (request == null) throw new IllegalArgumentException("request is required");
+        rejectMainThread();
+        initialize();
         SecureCommunicationClient client;
-        synchronized (this) {
-            initialize();
-            client = messageClient;
+        synchronized (stateLock) { client = messageClient; }
+        if (owner != null && owner.isCanceled()) {
+            throw new SecureError("SC_REQUEST_CANCELLED", "Secure request was cancelled");
         }
-        Map<String, String> headers = new LinkedHashMap<>(protectedHeaders == null
-                ? Collections.emptyMap() : protectedHeaders);
-        SecureRequest request = new SecureRequest(method, logicalPath,
-                "application/json", headers, body, requestId);
-        try (Response response = client.newCall(request).execute()) {
+        SecureRequest requestForCall = request.getRequestId() == null
+                ? new SecureRequest(request.getMethod(), request.getLogicalPath(),
+                request.getContentType(), request.getProtectedHeaders(), request.getBody(),
+                java.util.UUID.randomUUID().toString())
+                : request;
+        Call call = client.newCall(requestForCall);
+        if (owner != null) owner.setActiveCall(call);
+        try (Response response = call.execute()) {
             ResponseBody responseBody = response.body();
             byte[] bytes = responseBody == null ? new byte[0] : responseBody.bytes();
             return new SecureResponse(response.code(),
                     response.header("Content-Type", "application/octet-stream"), bytes);
+        } catch (SecureTransportException exception) {
+            SecureError error = exception.getSecureError();
+            if ("SC_UNKNOWN_SESSION".equals(error.getCode())) closeSession();
+            throw error;
+        } catch (SocketTimeoutException exception) {
+            throw new SecureError("SC_REQUEST_TIMEOUT", "Secure request timed out",
+                    0, null, exception);
+        } catch (InterruptedIOException exception) {
+            String code = owner != null && owner.isCanceled()
+                    ? "SC_REQUEST_CANCELLED" : "SC_REQUEST_TIMEOUT";
+            throw new SecureError(code, "Secure request did not complete", 0, null, exception);
         } catch (IOException exception) {
+            if (owner != null && owner.isCanceled()) {
+                throw new SecureError("SC_REQUEST_CANCELLED", "Secure request was cancelled",
+                        0, null, exception);
+            }
             throw new SecureError("SC_NETWORK_FAILED", "Network request failed",
                     0, null, exception);
+        } finally {
+            if (owner != null) owner.setActiveCall(null);
         }
     }
 
-    public synchronized void closeSession() {
-        session = null;
-        messageClient = null;
-        nextSequence = 0;
+    public void closeSession() {
+        synchronized (stateLock) {
+            generation++;
+            session = null;
+            messageClient = null;
+            nextSequence = 0;
+        }
     }
 
     private JSONObject postJson(String path, JSONObject body) throws Exception {
@@ -205,17 +272,25 @@ public final class SecureClient {
         try (Response response = transport.newCall(request).execute()) {
             String content = response.body() == null ? "" : response.body().string();
             if (!response.isSuccessful()) {
-                throw handshakeFailure(null);
+                String code = "SC_HANDSHAKE_FAILED";
+                String traceId = null;
+                try {
+                    JSONObject error = new JSONObject(content);
+                    code = error.optString("code", code);
+                    traceId = error.optString("traceId", null);
+                } catch (Exception ignored) { }
+                throw new SecureError(code, "Secure handshake failed",
+                        response.code(), traceId, null);
             }
             return new JSONObject(content);
         }
     }
 
-    private byte[] transcriptHash(JSONObject request, byte[] serverIdentity,
+    private byte[] transcriptHash(JSONObject request, String deviceId, byte[] serverIdentity,
             byte[] serverEphemeral, String keyId, String sessionId,
             long createdAt, long expiresAt) throws Exception {
         String transcript = String.join("\n", "SC1-HANDSHAKE", "1", SUITE,
-                config.appId, deviceId, config.deviceType,
+                config.getAppId(), deviceId, config.getDeviceType(),
                 request.getString("clientEphemeralPublicKey"),
                 request.getString("installationPublicKey"), encode(serverIdentity),
                 encode(serverEphemeral), keyId, sessionId, String.valueOf(createdAt),
@@ -224,34 +299,24 @@ public final class SecureClient {
                 .digest(transcript.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static byte[] signP1363(KeyPair identity, byte[] hash) throws Exception {
-        Signature signer = Signature.getInstance("SHA256withECDSA");
-        signer.initSign(identity.getPrivate());
-        signer.update(hash);
-        return derToP1363(signer.sign());
+    private void clearFailedSession(long expectedGeneration) {
+        synchronized (stateLock) {
+            if (generation == expectedGeneration) {
+                session = null;
+                messageClient = null;
+                nextSequence = 0;
+            }
+        }
     }
 
-    private static byte[] derToP1363(byte[] der) {
-        if (der.length < 8 || der[0] != 0x30) throw new IllegalArgumentException("Invalid ECDSA signature");
-        int offset = 2;
-        if (der[offset++] != 0x02) throw new IllegalArgumentException("Invalid ECDSA signature");
-        int rLength = der[offset++] & 0xff;
-        byte[] r = Arrays.copyOfRange(der, offset, offset + rLength);
-        offset += rLength;
-        if (der[offset++] != 0x02) throw new IllegalArgumentException("Invalid ECDSA signature");
-        int sLength = der[offset++] & 0xff;
-        byte[] s = Arrays.copyOfRange(der, offset, offset + sLength);
-        byte[] result = new byte[64];
-        copyInteger(r, result, 0);
-        copyInteger(s, result, 32);
-        return result;
+    private static boolean equalToken(String left, String right) {
+        return left == null ? right == null : left.equals(right);
     }
 
-    private static void copyInteger(byte[] source, byte[] target, int offset) {
-        int first = source.length > 32 && source[0] == 0 ? 1 : 0;
-        int length = source.length - first;
-        if (length > 32) throw new IllegalArgumentException("Invalid ECDSA integer");
-        System.arraycopy(source, first, target, offset + 32 - length, length);
+    private static void rejectMainThread() throws SecureError {
+        if (Looper.myLooper() != null && Looper.myLooper() == Looper.getMainLooper()) {
+            throw new SecureError("SC_MAIN_THREAD_NETWORK", "Network calls are forbidden on the main thread");
+        }
     }
 
     private static PublicKey ecPublicKey(byte[] encoded) throws Exception {
@@ -271,37 +336,49 @@ public final class SecureClient {
         return new SecureError("SC_HANDSHAKE_FAILED", "Secure handshake failed", 0, null, cause);
     }
 
-    public static final class Config {
-        private final String baseUrl;
-        private final String appId;
-        private final String deviceType;
-        private final Map<String, String> serverTrustAnchors;
-        private final OkHttpClient httpClient;
-        private final long connectTimeoutMillis;
-        private final long readTimeoutMillis;
-        private final long writeTimeoutMillis;
-        private final long allowedClockSkewMillis;
+    private final class RealSecureCall implements SecureCall {
+        private final SecureRequest request;
+        private final AtomicBoolean executed = new AtomicBoolean();
+        private volatile boolean canceled;
+        private volatile Call activeCall;
+        private volatile Thread runner;
 
-        public Config(String baseUrl, String appId, Map<String, String> serverTrustAnchors) {
-            this(baseUrl, appId, "ANDROID", serverTrustAnchors, null,
-                    10_000, 15_000, 15_000, 120_000);
+        RealSecureCall(SecureRequest request) { this.request = request; }
+
+        @Override public SecureResponse execute() throws SecureError {
+            if (!executed.compareAndSet(false, true)) {
+                throw new IllegalStateException("SecureCall may only be executed once");
+            }
+            if (canceled) throw new SecureError("SC_REQUEST_CANCELLED", "Secure request was cancelled");
+            runner = Thread.currentThread();
+            try { return executeRequest(request, this); }
+            finally { runner = null; }
         }
 
-        public Config(String baseUrl, String appId, String deviceType,
-                Map<String, String> serverTrustAnchors, OkHttpClient httpClient,
-                long connectTimeoutMillis, long readTimeoutMillis,
-                long writeTimeoutMillis, long allowedClockSkewMillis) {
-            this.baseUrl = baseUrl;
-            this.appId = appId;
-            this.deviceType = deviceType == null ? "ANDROID" : deviceType.toUpperCase();
-            this.serverTrustAnchors = Collections.unmodifiableMap(
-                    new LinkedHashMap<>(serverTrustAnchors == null
-                            ? Collections.emptyMap() : serverTrustAnchors));
-            this.httpClient = httpClient;
-            this.connectTimeoutMillis = connectTimeoutMillis;
-            this.readTimeoutMillis = readTimeoutMillis;
-            this.writeTimeoutMillis = writeTimeoutMillis;
-            this.allowedClockSkewMillis = allowedClockSkewMillis;
+        @Override public void enqueue(final Callback callback) {
+            if (callback == null) throw new IllegalArgumentException("callback is required");
+            executor.execute(() -> {
+                try { callback.onResponse(execute()); }
+                catch (SecureError error) { callback.onFailure(error); }
+                catch (RuntimeException error) {
+                    callback.onFailure(new SecureError("SC_NETWORK_FAILED", "Secure call failed",
+                            0, null, error));
+                }
+            });
+        }
+
+        @Override public void cancel() {
+            canceled = true;
+            Call call = activeCall;
+            if (call != null) call.cancel();
+            Thread thread = runner;
+            if (thread != null) thread.interrupt();
+        }
+
+        @Override public boolean isCanceled() { return canceled; }
+        void setActiveCall(Call call) {
+            activeCall = call;
+            if (canceled && call != null) call.cancel();
         }
     }
 }

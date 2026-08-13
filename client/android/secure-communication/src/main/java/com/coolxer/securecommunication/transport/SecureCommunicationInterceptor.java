@@ -1,8 +1,8 @@
-package com.coolxer.securecommunication.transport;
+package com.coolxer.securecommunication.internal.transport;
 
 import com.coolxer.securecommunication.SecureError;
 import com.coolxer.securecommunication.SecureRequest;
-import com.coolxer.securecommunication.protocol.SecureEnvelopeCodec;
+import com.coolxer.securecommunication.internal.protocol.SecureEnvelopeCodec;
 
 import org.json.JSONObject;
 
@@ -25,8 +25,8 @@ public final class SecureCommunicationInterceptor implements Interceptor {
     private final SecureEnvelopeCodec codec;
 
     public SecureCommunicationInterceptor(HttpUrl endpoint, SecureEnvelopeCodec codec) {
-        if (endpoint == null || !"https".equals(endpoint.scheme())) {
-            throw new IllegalArgumentException("protocol v1 endpoint must use HTTPS");
+        if (endpoint == null) {
+            throw new IllegalArgumentException("protocol v1 endpoint is required");
         }
         this.endpoint = endpoint;
         this.codec = codec;
@@ -110,7 +110,8 @@ public final class SecureCommunicationInterceptor implements Interceptor {
         String contentType = request.body() == null || request.body().contentType() == null
                 ? "application/octet-stream"
                 : request.body().contentType().toString();
-        return new SecureRequest(request.method(), path, contentType, body);
+        return new SecureRequest(request.method(), path, contentType,
+                java.util.Collections.emptyMap(), body, null);
     }
 
     private static SecureError parseServerError(Response response, String body) {

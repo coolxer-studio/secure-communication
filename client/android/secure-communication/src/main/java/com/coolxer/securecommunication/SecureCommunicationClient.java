@@ -1,8 +1,7 @@
 package com.coolxer.securecommunication;
 
-import com.coolxer.securecommunication.protocol.SecureEnvelopeCodec;
-import com.coolxer.securecommunication.transport.SecureCommunicationInterceptor;
-import com.coolxer.securecommunication.transport.SecureTransportException;
+import com.coolxer.securecommunication.internal.protocol.SecureEnvelopeCodec;
+import com.coolxer.securecommunication.internal.transport.SecureCommunicationInterceptor;
 
 import java.io.IOException;
 
@@ -17,14 +16,14 @@ import okhttp3.ResponseBody;
 import okhttp3.TlsVersion;
 import java.util.Collections;
 
-public final class SecureCommunicationClient {
+final class SecureCommunicationClient {
     private final HttpUrl baseUrl;
     private final OkHttpClient httpClient;
 
-    public SecureCommunicationClient(
+    SecureCommunicationClient(
             HttpUrl baseUrl, OkHttpClient hostClient, SecureEnvelopeCodec codec) {
-        if (baseUrl == null || !"https".equals(baseUrl.scheme())) {
-            throw new IllegalArgumentException("baseUrl must use HTTPS");
+        if (baseUrl == null) {
+            throw new IllegalArgumentException("baseUrl is required");
         }
         this.baseUrl = baseUrl;
         HttpUrl endpoint = baseUrl.resolve("/sc/v1/message");
@@ -41,7 +40,7 @@ public final class SecureCommunicationClient {
                 .build();
     }
 
-    public Call newCall(SecureRequest request) {
+    Call newCall(SecureRequest request) {
         Request transportPlaceholder = new Request.Builder()
                 .url(baseUrl)
                 .post(okhttp3.RequestBody.create(new byte[0], null))
@@ -50,38 +49,4 @@ public final class SecureCommunicationClient {
         return httpClient.newCall(transportPlaceholder);
     }
 
-    public Call execute(SecureRequest request, SecureCallback callback) {
-        Call call = newCall(request);
-        call.enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException exception) {
-                if (exception instanceof SecureTransportException) {
-                    callback.onFailure(
-                            ((SecureTransportException) exception).getSecureError());
-                } else {
-                    callback.onFailure(new SecureError(
-                            "SC_NETWORK_FAILED", "Network request failed",
-                            0, null, exception));
-                }
-            }
-
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                try (ResponseBody body = response.body()) {
-                    byte[] bytes = body == null ? new byte[0] : body.bytes();
-                    callback.onResponse(new SecureResponse(
-                            response.code(),
-                            response.header("Content-Type", "application/octet-stream"),
-                            bytes));
-                }
-            }
-        });
-        return call;
-    }
-
-    public interface SecureCallback {
-        void onResponse(SecureResponse response);
-
-        void onFailure(SecureError error);
-    }
 }

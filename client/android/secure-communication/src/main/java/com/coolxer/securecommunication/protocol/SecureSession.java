@@ -1,4 +1,4 @@
-package com.coolxer.securecommunication.protocol;
+package com.coolxer.securecommunication.internal.protocol;
 
 import java.util.Arrays;
 import javax.crypto.SecretKey;

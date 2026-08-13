@@ -17,8 +17,8 @@ struct SecureEnvelope: Codable, Sendable {
     let ct: String
 }
 
-public actor EnvelopeCodec {
-    public static let mediaType = "application/sc-envelope+json"
+actor EnvelopeCodec {
+    static let mediaType = "application/sc-envelope+json"
     private static let protectedMediaType = "application/sc-protected+json"
     private static let messageEndpoint = "/sc/v1/message"
 
@@ -29,11 +29,11 @@ public actor EnvelopeCodec {
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
-    public init(
+    init(
         session: SecureSession,
         sequences: PersistentSequenceStore,
-        allowedClockSkew: TimeInterval = 300,
-        clock: @escaping @Sendable () -> Date = Date.init
+        allowedClockSkew: TimeInterval = 120,
+        clock: @escaping @Sendable () -> Date = { Date() }
     ) throws {
         guard session.suite == .international, allowedClockSkew >= 0 else {
             throw SecureError.unsupportedSuite
@@ -49,10 +49,10 @@ public actor EnvelopeCodec {
         let now = clock()
         guard now < session.expiresAt else { throw SecureError.unknownSession }
         let sequence = try await sequences.next(sessionID: session.sessionID)
-        let method = try Self.normalizeMethod(request.method)
-        let path = try Self.normalizePath(request.path)
-        let contentType = try Self.normalizeContentType(request.contentType)
-        guard request.requestID.range(
+        _ = try Self.normalizeMethod(request.method)
+        _ = try Self.normalizePath(request.logicalPath)
+        _ = try Self.normalizeContentType(request.contentType)
+        guard let requestID = request.requestID, requestID.range(
             of: #"^[!-~]{1,128}$"#, options: .regularExpression) != nil
         else { throw SecureError.invalidEnvelope }
         let nonceData = Self.nonce(
@@ -65,7 +65,7 @@ public actor EnvelopeCodec {
             sid: session.sessionID,
             ts: timestamp,
             seq: sequence,
-            rid: request.requestID,
+            rid: requestID,
             m: "POST",
             p: Self.messageEndpoint,
             cty: Self.protectedMediaType,
@@ -86,7 +86,7 @@ public actor EnvelopeCodec {
             st: unsigned.st,
             nonce: unsigned.nonce,
             ct: (sealed.ciphertext + sealed.tag).base64URL)
-        return (try encoder.encode(envelope), sequence, request.requestID)
+        return (try encoder.encode(envelope), sequence, requestID)
     }
 
     func decode(
@@ -167,7 +167,7 @@ public actor EnvelopeCodec {
         }
         return try JSONSerialization.data(withJSONObject: [
             "method": try normalizeMethod(request.method),
-            "path": try normalizePath(request.path),
+            "path": try normalizePath(request.logicalPath),
             "contentType": try normalizeContentType(request.contentType),
             "headers": headers,
             "body": request.body.base64URL

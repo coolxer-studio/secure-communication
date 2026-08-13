@@ -1,4 +1,4 @@
-package com.coolxer.securecommunication.transport;
+package com.coolxer.securecommunication.internal.transport;
 
 import com.coolxer.securecommunication.SecureError;
 

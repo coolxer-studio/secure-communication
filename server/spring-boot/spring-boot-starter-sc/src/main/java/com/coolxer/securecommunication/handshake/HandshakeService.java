@@ -32,7 +32,7 @@ import java.util.regex.Pattern;
 public final class HandshakeService {
     private static final Pattern ID = Pattern.compile("[A-Za-z0-9._:@/-]{1,128}");
     private static final Set<String> DEVICE_TYPES =
-            Set.of("H5", "HOST", "ANDROID", "IOS", "EMULATOR");
+            Set.of("H5", "HOST", "SERVER", "ANDROID", "IOS", "EMULATOR");
 
     private final ServerIdentityProvider serverIdentity;
     private final SessionRepository sessions;

@@ -1,6 +1,7 @@
 package securecommunication
 
 import (
+	"context"
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -10,7 +11,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 type vector struct {
@@ -30,6 +34,114 @@ type vector struct {
 	AADUTF8                     string `json:"aadUtf8"`
 	PlaintextUTF8               string `json:"plaintextUtf8"`
 	CombinedCiphertextBase64URL string `json:"combinedCiphertextBase64Url"`
+}
+
+type blockingIdentityStore struct {
+	mu      sync.Mutex
+	calls   int
+	release <-chan struct{}
+}
+
+func (s *blockingIdentityStore) LoadOrCreate(string) (InstallationIdentity, error) {
+	s.mu.Lock()
+	s.calls++
+	s.mu.Unlock()
+	<-s.release
+	return nil, os.ErrPermission
+}
+
+func TestConcurrentInitializationIsSharedAndOneWaiterMayCancel(t *testing.T) {
+	release := make(chan struct{})
+	store := &blockingIdentityStore{release: release}
+	client, err := New(Config{
+		BaseURL: "https://example.test", AppID: "agent", DeviceType: "SERVER",
+		ServerTrustAnchors: map[string]string{"kid": "spki"}, IdentityStore: store,
+		RequestTimeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelledContext, cancel := context.WithCancel(context.Background())
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+	go func() { first <- client.Initialize(cancelledContext) }()
+	go func() { second <- client.Initialize(context.Background()) }()
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	if error := <-first; error == nil || error.(*Error).Code != "SC_REQUEST_CANCELLED" {
+		t.Fatalf("unexpected cancelled waiter result: %v", error)
+	}
+	close(release)
+	if error := <-second; error == nil || error.(*Error).Code != "SC_IDENTITY_FAILED" {
+		t.Fatalf("unexpected shared handshake result: %v", error)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.calls != 1 {
+		t.Fatalf("expected one identity load, got %d", store.calls)
+	}
+}
+
+func TestUnifiedConfigAndRequestDefaults(t *testing.T) {
+	directory := t.TempDir()
+	client, err := New(Config{
+		BaseURL: "http://127.0.0.1:8080", AppID: "agent", DeviceType: "server",
+		ServerTrustAnchors:              map[string]string{"kid": "spki"},
+		IdentityStore:                   FileIdentityStore{Path: filepath.Join(directory, "identity-v2.json")},
+		AllowInsecureLoopbackForTesting: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.config.DeviceType != "SERVER" || client.config.RequestTimeout != 15*time.Second ||
+		client.config.AllowedClockSkew != 2*time.Minute {
+		t.Fatal("unified configuration defaults were not applied")
+	}
+	if _, err := New(Config{
+		BaseURL: "http://example.test", AppID: "agent",
+		ServerTrustAnchors:              map[string]string{"kid": "spki"},
+		IdentityStore:                   FileIdentityStore{Path: filepath.Join(directory, "other.json")},
+		AllowInsecureLoopbackForTesting: true,
+	}); err == nil {
+		t.Fatal("non-loopback HTTP must be rejected")
+	}
+}
+
+func TestFileIdentityStoreUsesV2SchemaAndAppBinding(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "identity-v2.json")
+	store := FileIdentityStore{Path: path}
+	first, err := store.LoadOrCreate("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.LoadOrCreate("agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.DeviceID() != second.DeviceID() {
+		t.Fatal("device ID was not stable")
+	}
+	if _, err := store.LoadOrCreate("other-agent"); err == nil {
+		t.Fatal("identity must be bound to app ID")
+	}
+	legacy := filepath.Join(t.TempDir(), "legacy.json")
+	if err := os.WriteFile(legacy, []byte(`{"deviceId":"old","privateKey":"old"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (FileIdentityStore{Path: legacy}).LoadOrCreate("agent"); err == nil {
+		t.Fatal("legacy identity must not be migrated or overwritten")
+	}
+}
+
+func TestContextErrorsUseStableCodes(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := contextError(cancelled.Err()).Code; got != "SC_REQUEST_CANCELLED" {
+		t.Fatalf("unexpected cancellation code: %s", got)
+	}
+	if got := contextError(context.DeadlineExceeded).Code; got != "SC_REQUEST_TIMEOUT" {
+		t.Fatalf("unexpected timeout code: %s", got)
+	}
 }
 
 func loadVector(t *testing.T, name string) vector {

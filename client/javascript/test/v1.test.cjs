@@ -1,15 +1,110 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const {
-  V1_ENVELOPE_MEDIA_TYPE,
-  createSecureFetch,
-  createV1Codec,
-  deriveAesGcmSession,
-  importAesGcmSession,
-  normalizeV1Path,
-  verifyP256Transcript
-} = require('../dist/index.cjs');
+const publicApi = require('../dist/index.cjs');
+let V1_ENVELOPE_MEDIA_TYPE;
+let createSecureFetch;
+let createV1Codec;
+let deriveAesGcmSession;
+let importAesGcmSession;
+let normalizeV1Path;
+let verifyP256Transcript;
+
+test.before(async () => {
+  const protocol = await import('../src/v1.js');
+  const transport = await import('../src/transport.js');
+  ({
+    V1_ENVELOPE_MEDIA_TYPE,
+    createV1Codec,
+    deriveAesGcmSession,
+    importAesGcmSession,
+    normalizeV1Path,
+    verifyP256Transcript
+  } = protocol);
+  ({ createSecureFetch } = transport);
+});
+
+test('package root exposes only the unified high-level contract', () => {
+  assert.deepEqual(Object.keys(publicApi).sort(), [
+    'IndexedDbIdentityStore', 'MemoryIdentityStore', 'SecureClient',
+    'SecureClientConfig', 'SecureError', 'SecureRequest', 'SecureResponse',
+    'createSecureClient'
+  ]);
+  const request = new publicApi.SecureRequest({ logicalPath: '/health' });
+  assert.equal(request.method, 'GET');
+  assert.equal(request.contentType, 'application/octet-stream');
+  assert.equal(request.body.length, 0);
+  assert.throws(
+    () => new publicApi.SecureRequest({ logicalPath: 'https://example.test/x' }),
+    /path/);
+  const error = new publicApi.SecureError('SC_TEST', 'test', {
+    httpStatus: 409, traceId: 'trace'
+  });
+  assert.equal(error.httpStatus, 409);
+  assert.equal(error.traceId, 'trace');
+});
+
+test('configuration restricts device types and insecure HTTP to loopback', () => {
+  const common = {
+    appId: 'agent',
+    serverTrustAnchors: { kid: 'spki' },
+    identityStore: new publicApi.MemoryIdentityStore(),
+    fetch: async () => {}
+  };
+  const config = new publicApi.SecureClientConfig({
+    ...common,
+    baseUrl: 'http://127.0.0.1:8080',
+    deviceType: 'server',
+    allowInsecureLoopbackForTesting: true
+  });
+  assert.equal(config.deviceType, 'SERVER');
+  assert.equal(config.requestTimeoutMillis, 15000);
+  assert.equal(config.allowedClockSkewMillis, 120000);
+  assert.throws(() => new publicApi.SecureClientConfig({
+    ...common,
+    baseUrl: 'http://example.test',
+    allowInsecureLoopbackForTesting: true
+  }), /HTTPS/);
+  assert.throws(() => new publicApi.SecureClientConfig({
+    ...common,
+    baseUrl: 'https://example.test',
+    deviceType: 'UNKNOWN'
+  }), /deviceType/);
+});
+
+test('concurrent initialization is shared and retains token after failure', async () => {
+  let starts = 0;
+  const tokens = [];
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  const client = publicApi.createSecureClient({
+    baseUrl: 'https://api.example.test',
+    appId: 'host-agent',
+    deviceType: 'HOST',
+    serverTrustAnchors: { kid: 'spki' },
+    identityStore: new publicApi.MemoryIdentityStore(),
+    fetch: async (url, init) => {
+      if (url.endsWith('/handshake')) {
+        starts += 1;
+        tokens.push(JSON.parse(init.body).enrollmentToken);
+        if (starts === 1) await blocked;
+      }
+      return { ok: true, status: 200, json: async () => ({ v: 0 }) };
+    }
+  });
+  client.enroll('one-time-token');
+  const controller = new AbortController();
+  const cancelled = client.initialize({ signal: controller.signal });
+  const shared = client.initialize();
+  controller.abort();
+  release();
+  await assert.rejects(cancelled, error => error.code === 'SC_REQUEST_CANCELLED');
+  await assert.rejects(shared, error => error.code === 'SC_HANDSHAKE_FAILED');
+  assert.equal(starts, 1);
+  await assert.rejects(client.initialize(), error => error.code === 'SC_HANDSHAKE_FAILED');
+  assert.equal(starts, 2);
+  assert.deepEqual(tokens, ['one-time-token', 'one-time-token']);
+});
 
 const KEY = Uint8Array.from(
   Buffer.from(

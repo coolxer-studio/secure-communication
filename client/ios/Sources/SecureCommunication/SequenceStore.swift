@@ -1,18 +1,18 @@
 import Foundation
 
-public actor PersistentSequenceStore {
+actor PersistentSequenceStore {
     private let defaults: UserDefaults
     private let namespace: String
 
-    public init(
+    init(
         defaults: UserDefaults = .standard,
-        namespace: String = "com.coolxer.securecommunication.v1"
+        namespace: String = "com.coolxer.securecommunication.v2"
     ) {
         self.defaults = defaults
         self.namespace = namespace
     }
 
-    public func next(sessionID: String) throws -> UInt64 {
+    func next(sessionID: String) throws -> UInt64 {
         let key = "\(namespace).sequence.\(sessionID)"
         let current = UInt64(defaults.object(forKey: key) as? Int64 ?? 0)
         guard current < 9_007_199_254_740_991 else {

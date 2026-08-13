@@ -1,8 +1,8 @@
 import CryptoKit
 import Foundation
 
-public enum InternationalHandshake {
-    public static func verifyTranscript(
+enum InternationalHandshake {
+    static func verifyTranscript(
         hash: Data,
         p1363Signature: Data,
         serverSigningKey: P256.Signing.PublicKey
@@ -16,7 +16,7 @@ public enum InternationalHandshake {
         }
     }
 
-    public static func deriveSession(
+    static func deriveSession(
         keyID: String,
         sessionID: String,
         localEphemeralPrivateKey: P256.KeyAgreement.PrivateKey,

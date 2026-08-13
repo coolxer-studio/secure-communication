@@ -1,17 +1,16 @@
 import Foundation
 
-public final class SecureCommunicationClient: Sendable {
+final class SecureCommunicationClient: Sendable {
     private let endpoint: URL
     private let session: URLSession
     private let codec: EnvelopeCodec
 
-    public init(
+    init(
         baseURL: URL,
         codec: EnvelopeCodec,
         session: URLSession? = nil
     ) throws {
-        guard baseURL.scheme?.lowercased() == "https",
-              let endpoint = URL(string: "/sc/v1/message", relativeTo: baseURL)?.absoluteURL
+        guard let endpoint = URL(string: "/sc/v1/message", relativeTo: baseURL)?.absoluteURL
         else {
             throw SecureError.invalidConfiguration("baseURL must use HTTPS")
         }
@@ -27,7 +26,7 @@ public final class SecureCommunicationClient: Sendable {
         }
     }
 
-    public func send(_ request: SecureRequest) async throws -> SecureResponse {
+    func send(_ request: SecureRequest) async throws -> SecureResponse {
         let encoded = try await codec.encode(request)
         var transport = URLRequest(url: endpoint)
         transport.httpMethod = "POST"
@@ -36,13 +35,26 @@ public final class SecureCommunicationClient: Sendable {
         transport.setValue(EnvelopeCodec.mediaType, forHTTPHeaderField: "Content-Type")
         transport.setValue(EnvelopeCodec.mediaType, forHTTPHeaderField: "Accept")
 
-        let (data, response) = try await session.data(for: transport)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: transport)
+        } catch is CancellationError {
+            throw SecureError.requestCancelled
+        } catch let error as URLError where error.code == .cancelled {
+            throw SecureError.requestCancelled
+        } catch let error as URLError where error.code == .timedOut {
+            throw SecureError(code: "SC_REQUEST_TIMEOUT", cause: error)
+        } catch {
+            throw SecureError.transport(
+                code: "SC_NETWORK_FAILED", status: 0, traceID: nil, cause: error)
+        }
         guard let http = response as? HTTPURLResponse else {
             throw SecureError.transport(
                 code: "SC_NETWORK_FAILED", status: 0, traceID: nil)
         }
         let mediaType = http.value(forHTTPHeaderField: "Content-Type")?
-            .split(separator: ";", maxSplits: 1).first.map(String.init).lowercased()
+            .split(separator: ";", maxSplits: 1).first.map(String.init)?.lowercased()
         guard mediaType == EnvelopeCodec.mediaType else {
             let error = (try? JSONSerialization.jsonObject(with: data))
                 as? [String: Any]
@@ -83,6 +95,6 @@ public final class SecureCommunicationClient: Sendable {
 /// Supply a URLSession configured with this policy from the host when managed
 /// pinning is required. Normal certificate and hostname validation must run
 /// before custom SPKI pin checks; authentication failures must use cancel.
-public protocol ServerTrustPolicy: Sendable {
+protocol ServerTrustPolicy: Sendable {
     func evaluate(_ challenge: URLAuthenticationChallenge) -> URLSession.AuthChallengeDisposition
 }

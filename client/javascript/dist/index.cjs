@@ -244,19 +244,23 @@ var PROTECTED_MEDIA_TYPE = 'application/sc-protected+json';
 var MAX_SEQUENCE = 9007199254740991;
 var IDENTIFIER = /^[\x21-\x7e]{1,128}$/;
 var BASE64URL = /^[A-Za-z0-9_-]+$/;
-function SecureCommunicationError(code, message, details) {
-  this.name = 'SecureCommunicationError';
+function SecureError(code, message, details) {
+  this.name = 'SecureError';
   this.code = code;
   this.message = message || code;
-  this.status = details && details.status;
+  this.httpStatus = details && (details.httpStatus == null ? details.status : details.httpStatus);
   this.traceId = details && details.traceId;
   this.cause = details && details.cause;
   if (Error.captureStackTrace) {
-    Error.captureStackTrace(this, SecureCommunicationError);
+    Error.captureStackTrace(this, SecureError);
   }
 }
-SecureCommunicationError.prototype = Object.create(Error.prototype);
-SecureCommunicationError.prototype.constructor = SecureCommunicationError;
+SecureError.prototype = Object.create(Error.prototype);
+SecureError.prototype.constructor = SecureError;
+
+// Internal compatibility name used by the protocol implementation. It is not
+// exported from the package root in 2.0.
+var SecureCommunicationError = SecureError;
 function fail(code, message, cause) {
   throw new SecureCommunicationError(code, message, {
     cause: cause
@@ -745,7 +749,7 @@ function createV1Codec(session, options) {
 var V1_INTERNATIONAL_SUITE = SUITE;
 var V1_ENVELOPE_MEDIA_TYPE = 'application/sc-envelope+json';
 
-function bodyBytes(value) {
+function bodyBytes$1(value) {
   if (value == null) {
     return new Uint8Array(0);
   }
@@ -826,10 +830,10 @@ function protectedPayload(init, configuredNames) {
     path: normalizeV1Path(init.logicalPath),
     contentType: normalizeV1ContentType(init.logicalContentType),
     headers: values,
-    body: base64Url(bodyBytes(init.body))
+    body: base64Url(bodyBytes$1(init.body))
   });
 }
-function newRequestId() {
+function newRequestId$1() {
   if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
     return globalThis.crypto.randomUUID();
   }
@@ -838,9 +842,11 @@ function newRequestId() {
   }
   return base64Url(globalThis.crypto.getRandomValues(new Uint8Array(16)));
 }
-function requireHttps(baseUrl, allowInsecureForTesting) {
+function requireHttps(baseUrl, allowInsecureLoopbackForTesting) {
   var parsed = new URL(baseUrl);
-  if (parsed.protocol !== 'https:' && !allowInsecureForTesting) {
+  var host = parsed.hostname.toLowerCase();
+  var loopback = host === 'localhost' || host === '[::1]' || host === '::1' || /^127(?:\.\d{1,3}){3}$/.test(host);
+  if (parsed.protocol !== 'https:' && !(allowInsecureLoopbackForTesting && parsed.protocol === 'http:' && loopback)) {
     throw new TypeError('baseUrl must use HTTPS');
   }
   return parsed.toString().replace(/\/+$/, '');
@@ -871,7 +877,7 @@ function createSecureFetch(configuration) {
   if (!fetchImplementation) {
     throw new TypeError('fetch implementation is required');
   }
-  var baseUrl = requireHttps(configuration.baseUrl, configuration.allowInsecureForTesting === true);
+  var baseUrl = requireHttps(configuration.baseUrl, configuration.allowInsecureLoopbackForTesting === true);
   var endpoint = baseUrl + (configuration.endpoint || '/sc/v1/message');
   return /*#__PURE__*/function () {
     var _secureFetch = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee(path, init) {
@@ -881,8 +887,8 @@ function createSecureFetch(configuration) {
           case 0:
             init = init || {};
             method = String(init.method || 'GET').toUpperCase();
-            contentType = getHeader(init.headers, 'content-type') || 'application/octet-stream';
-            requestId = init.requestId || newRequestId();
+            contentType = init.contentType || getHeader(init.headers, 'content-type') || 'application/octet-stream';
+            requestId = init.requestId || newRequestId$1();
             payloadInit = Object.assign({}, init, {
               method: method,
               logicalPath: path,
@@ -926,7 +932,7 @@ function createSecureFetch(configuration) {
               errorBody = {};
             }
             throw new SecureCommunicationError(errorBody.code || 'SC_TRANSPORT_FAILED', errorBody.message || 'Secure transport failed', {
-              status: response.status,
+              httpStatus: response.status,
               traceId: errorBody.traceId
             });
           case 4:
@@ -947,7 +953,7 @@ function createSecureFetch(configuration) {
                 return utf8Decode(Array.prototype.slice.call(protectedResult.body));
               },
               json: function json() {
-                return JSON.parse(decoded.text());
+                return JSON.parse(utf8Decode(Array.prototype.slice.call(protectedResult.body)));
               }
             });
         }
@@ -960,9 +966,10 @@ function createSecureFetch(configuration) {
   }();
 }
 
+var DEVICE_TYPES = ['H5', 'HOST', 'SERVER', 'ANDROID', 'IOS', 'EMULATOR'];
 function subtle() {
   if (!globalThis.crypto || !globalThis.crypto.subtle) {
-    throw new SecureCommunicationError('SC_CRYPTO_UNAVAILABLE', 'WebCrypto is required');
+    throw new SecureError('SC_CRYPTO_UNAVAILABLE', 'WebCrypto is required');
   }
   return globalThis.crypto.subtle;
 }
@@ -990,338 +997,545 @@ function equal(left, right) {
   for (var index = 0; index < left.length; index += 1) value |= left[index] ^ right[index];
   return value === 0;
 }
-function responseJson(_x) {
-  return _responseJson.apply(this, arguments);
+function newRequestId() {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== 'function') {
+    throw new SecureError('SC_CRYPTO_UNAVAILABLE', 'WebCrypto random generator is required');
+  }
+  return b64(globalThis.crypto.getRandomValues(new Uint8Array(16)));
 }
-function _responseJson() {
-  _responseJson = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee7(response) {
-    var body, _t1;
-    return _regenerator().w(function (_context7) {
-      while (1) switch (_context7.p = _context7.n) {
-        case 0:
-          _context7.p = 0;
-          _context7.n = 1;
-          return response.json();
-        case 1:
-          body = _context7.v;
-          _context7.n = 3;
-          break;
-        case 2:
-          _context7.p = 2;
-          _t1 = _context7.v;
-          throw new SecureCommunicationError('SC_HANDSHAKE_FAILED', 'Handshake response is invalid', {
-            cause: _t1
-          });
-        case 3:
-          if (response.ok) {
-            _context7.n = 4;
-            break;
-          }
-          throw new SecureCommunicationError(body.code || 'SC_HANDSHAKE_FAILED', body.message || 'Handshake failed', {
-            status: response.status,
-            traceId: body.traceId
-          });
-        case 4:
-          return _context7.a(2, body);
-      }
-    }, _callee7, null, [[0, 2]]);
-  }));
-  return _responseJson.apply(this, arguments);
+function bodyBytes(value) {
+  if (value == null) return new Uint8Array(0);
+  if (value instanceof Uint8Array) return new Uint8Array(value);
+  if (typeof ArrayBuffer !== 'undefined' && value instanceof ArrayBuffer) {
+    return new Uint8Array(value.slice(0));
+  }
+  if (typeof value === 'string') return new Uint8Array(utf8Encode(value));
+  throw new TypeError('body must be a string, Uint8Array, or ArrayBuffer');
 }
-function MemoryIdentityStore() {
-  var value = null;
-  this.load = /*#__PURE__*/function () {
-    var _load = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee() {
-      return _regenerator().w(function (_context) {
-        while (1) switch (_context.n) {
-          case 0:
-            return _context.a(2, value);
-        }
-      }, _callee);
-    }));
-    function load() {
-      return _load.apply(this, arguments);
-    }
-    return load;
-  }();
-  this.save = /*#__PURE__*/function () {
-    var _save = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(identity) {
-      return _regenerator().w(function (_context2) {
-        while (1) switch (_context2.n) {
-          case 0:
-            value = identity;
-          case 1:
-            return _context2.a(2);
-        }
-      }, _callee2);
-    }));
-    function save(_x2) {
-      return _save.apply(this, arguments);
-    }
-    return save;
-  }();
+function isLoopback(hostname) {
+  var host = String(hostname || '').toLowerCase();
+  if (host === 'localhost' || host === '[::1]' || host === '::1') return true;
+  var parts = host.split('.');
+  return parts.length === 4 && parts[0] === '127' && parts.every(function valid(part) {
+    return /^\d{1,3}$/.test(part) && Number(part) <= 255;
+  });
 }
-function IndexedDbIdentityStore(configuration) {
-  configuration = configuration || {};
-  var databaseName = configuration.databaseName || 'coolxer-secure-communication';
-  var key = configuration.key || 'installation-v1';
-  function database() {
-    if (typeof indexedDB === 'undefined') {
-      throw new SecureCommunicationError('SC_IDENTITY_STORE_UNAVAILABLE', 'IndexedDB is required');
-    }
-    return new Promise(function open(resolve, reject) {
-      var request = indexedDB.open(databaseName, 1);
-      request.onupgradeneeded = function upgrade() {
-        if (!request.result.objectStoreNames.contains('identity')) {
-          request.result.createObjectStore('identity');
-        }
-      };
-      request.onsuccess = function success() {
-        resolve(request.result);
-      };
-      request.onerror = function failed() {
-        reject(request.error);
-      };
+function normalizedBaseUrl(value, allowLoopback) {
+  var parsed;
+  try {
+    parsed = new URL(String(value));
+  } catch (error) {
+    throw new TypeError('baseUrl is invalid');
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new TypeError('baseUrl is invalid');
+  }
+  if (parsed.protocol !== 'https:' && !(allowLoopback && parsed.protocol === 'http:' && isLoopback(parsed.hostname))) {
+    throw new TypeError('baseUrl must use HTTPS');
+  }
+  return parsed.toString().replace(/\/+$/, '');
+}
+function mapExecutionError(error) {
+  if (error instanceof SecureError) return error;
+  if (error && error.name === 'AbortError') {
+    return new SecureError(error.__secureTimeout ? 'SC_REQUEST_TIMEOUT' : 'SC_REQUEST_CANCELLED', error.__secureTimeout ? 'Secure request timed out' : 'Secure request was cancelled', {
+      cause: error
     });
   }
-  this.load = /*#__PURE__*/function () {
-    var _load2 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee3() {
-      var db;
-      return _regenerator().w(function (_context3) {
-        while (1) switch (_context3.n) {
-          case 0:
-            _context3.n = 1;
-            return database();
-          case 1:
-            db = _context3.v;
-            return _context3.a(2, new Promise(function read(resolve, reject) {
-              var transaction = db.transaction('identity', 'readonly');
-              var request = transaction.objectStore('identity').get(key);
-              request.onsuccess = function success() {
-                resolve(request.result || null);
-              };
-              request.onerror = function failed() {
-                reject(request.error);
-              };
-              transaction.oncomplete = function complete() {
-                db.close();
-              };
-            }));
-        }
-      }, _callee3);
-    }));
-    function load() {
-      return _load2.apply(this, arguments);
-    }
-    return load;
-  }();
-  this.save = /*#__PURE__*/function () {
-    var _save2 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee4(identity) {
-      var db;
-      return _regenerator().w(function (_context4) {
-        while (1) switch (_context4.n) {
-          case 0:
-            _context4.n = 1;
-            return database();
-          case 1:
-            db = _context4.v;
-            return _context4.a(2, new Promise(function write(resolve, reject) {
-              var transaction = db.transaction('identity', 'readwrite');
-              transaction.objectStore('identity').put(identity, key);
-              transaction.oncomplete = function complete() {
-                db.close();
-                resolve();
-              };
-              transaction.onerror = function failed() {
-                db.close();
-                reject(transaction.error);
-              };
-            }));
-        }
-      }, _callee4);
-    }));
-    function save(_x3) {
-      return _save2.apply(this, arguments);
-    }
-    return save;
-  }();
+  return new SecureError('SC_NETWORK_FAILED', 'Secure network request failed', {
+    cause: error
+  });
 }
-function installationIdentity(_x4) {
-  return _installationIdentity.apply(this, arguments);
+function executionSignal(callerSignal, timeoutMillis) {
+  var controller = new AbortController();
+  var timedOut = false;
+  var timer = setTimeout(function timeout() {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMillis);
+  var cancel = function cancel() {
+    controller.abort();
+  };
+  if (callerSignal) {
+    if (callerSignal.aborted) cancel();else callerSignal.addEventListener('abort', cancel, {
+      once: true
+    });
+  }
+  return {
+    signal: controller.signal,
+    cleanup: function cleanup() {
+      clearTimeout(timer);
+      if (callerSignal) callerSignal.removeEventListener('abort', cancel);
+    },
+    error: function error(original) {
+      if (timedOut) {
+        var timeoutError = new SecureError('SC_REQUEST_TIMEOUT', 'Secure request timed out', {
+          cause: original
+        });
+        return timeoutError;
+      }
+      return mapExecutionError(original);
+    }
+  };
 }
-function _installationIdentity() {
-  _installationIdentity = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee8(store) {
-    var existing, keys, created;
+function waitFor(_x, _x2) {
+  return _waitFor.apply(this, arguments);
+}
+function _waitFor() {
+  _waitFor = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee8(promise, signal) {
+    var cancel, cancelled;
     return _regenerator().w(function (_context8) {
-      while (1) switch (_context8.n) {
+      while (1) switch (_context8.p = _context8.n) {
         case 0:
-          _context8.n = 1;
-          return store.load();
+          if (signal) {
+            _context8.n = 1;
+            break;
+          }
+          return _context8.a(2, promise);
         case 1:
-          existing = _context8.v;
-          if (!(existing && existing.deviceId && existing.privateKey && existing.publicKey)) {
+          if (!signal.aborted) {
             _context8.n = 2;
             break;
           }
-          return _context8.a(2, existing);
+          throw new SecureError('SC_REQUEST_CANCELLED', 'Secure request was cancelled');
         case 2:
-          _context8.n = 3;
+          cancelled = new Promise(function create(_, reject) {
+            cancel = function cancelWaiter() {
+              reject(new SecureError('SC_REQUEST_CANCELLED', 'Secure request was cancelled'));
+            };
+            signal.addEventListener('abort', cancel, {
+              once: true
+            });
+          });
+          _context8.p = 3;
+          _context8.n = 4;
+          return Promise.race([promise, cancelled]);
+        case 4:
+          return _context8.a(2, _context8.v);
+        case 5:
+          _context8.p = 5;
+          signal.removeEventListener('abort', cancel);
+          return _context8.f(5);
+        case 6:
+          return _context8.a(2);
+      }
+    }, _callee8, null, [[3,, 5, 6]]);
+  }));
+  return _waitFor.apply(this, arguments);
+}
+function responseJson(_x3) {
+  return _responseJson.apply(this, arguments);
+}
+function _responseJson() {
+  _responseJson = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee9(response) {
+    var body, _t15;
+    return _regenerator().w(function (_context9) {
+      while (1) switch (_context9.p = _context9.n) {
+        case 0:
+          _context9.p = 0;
+          _context9.n = 1;
+          return response.json();
+        case 1:
+          body = _context9.v;
+          _context9.n = 3;
+          break;
+        case 2:
+          _context9.p = 2;
+          _t15 = _context9.v;
+          throw new SecureError('SC_HANDSHAKE_FAILED', 'Handshake response is invalid', {
+            cause: _t15
+          });
+        case 3:
+          if (response.ok) {
+            _context9.n = 4;
+            break;
+          }
+          throw new SecureError(body.code || 'SC_HANDSHAKE_FAILED', body.message || 'Handshake failed', {
+            httpStatus: response.status,
+            traceId: body.traceId
+          });
+        case 4:
+          return _context9.a(2, body);
+      }
+    }, _callee9, null, [[0, 2]]);
+  }));
+  return _responseJson.apply(this, arguments);
+}
+function SecureClientConfig(configuration) {
+  configuration = configuration || {};
+  if (!configuration.appId || !/^[A-Za-z0-9._:@/-]{1,128}$/.test(configuration.appId)) {
+    throw new TypeError('appId is invalid');
+  }
+  this.allowInsecureLoopbackForTesting = configuration.allowInsecureLoopbackForTesting === true;
+  this.baseUrl = normalizedBaseUrl(configuration.baseUrl, this.allowInsecureLoopbackForTesting);
+  this.appId = configuration.appId;
+  this.deviceType = String(configuration.deviceType || 'H5').toUpperCase();
+  if (DEVICE_TYPES.indexOf(this.deviceType) < 0) throw new TypeError('deviceType is invalid');
+  if (!configuration.serverTrustAnchors || Object.keys(configuration.serverTrustAnchors).length === 0) {
+    throw new TypeError('serverTrustAnchors are required');
+  }
+  this.serverTrustAnchors = Object.assign({}, configuration.serverTrustAnchors);
+  this.identityStore = configuration.identityStore || new IndexedDbIdentityStore();
+  if (!this.identityStore || typeof this.identityStore.loadOrCreate !== 'function') {
+    throw new TypeError('identityStore.loadOrCreate is required');
+  }
+  this.requestTimeoutMillis = configuration.requestTimeoutMillis == null ? 15000 : Number(configuration.requestTimeoutMillis);
+  this.allowedClockSkewMillis = configuration.allowedClockSkewMillis == null ? 120000 : Number(configuration.allowedClockSkewMillis);
+  if (!(this.requestTimeoutMillis > 0) || !(this.allowedClockSkewMillis >= 0)) {
+    throw new TypeError('timeout configuration is invalid');
+  }
+  this.fetch = configuration.fetch || globalThis.fetch;
+  if (typeof this.fetch !== 'function') throw new TypeError('fetch implementation is required');
+  this.credentials = configuration.credentials;
+  Object.freeze(this.serverTrustAnchors);
+  Object.freeze(this);
+}
+function SecureRequest(configuration) {
+  configuration = configuration || {};
+  this.method = normalizeV1Method(configuration.method || 'GET');
+  this.logicalPath = normalizeV1Path(configuration.logicalPath);
+  this.contentType = normalizeV1ContentType(configuration.contentType || 'application/octet-stream');
+  this.protectedHeaders = Object.assign({}, configuration.protectedHeaders || {});
+  Object.keys(this.protectedHeaders).forEach(function validateHeader(name) {
+    var normalized = name.toLowerCase();
+    var value = String(configuration.protectedHeaders[name]);
+    if (!/^[a-z0-9-]{1,64}$/.test(normalized) || value.length > 8192 || /[\r\n]/.test(value)) {
+      throw new TypeError('protected header is invalid');
+    }
+  });
+  Object.freeze(this.protectedHeaders);
+  this.body = bodyBytes(configuration.body);
+  this.requestId = configuration.requestId || null;
+  if (this.requestId != null && !/^[\x21-\x7e]{1,128}$/.test(this.requestId)) {
+    throw new TypeError('requestId is invalid');
+  }
+}
+function SecureResponse(status, contentType, body) {
+  this.status = status;
+  this.contentType = normalizeV1ContentType(contentType);
+  this.body = bodyBytes(body);
+  this.ok = status >= 200 && status < 300;
+}
+SecureResponse.prototype.text = function text() {
+  return utf8Decode(Array.prototype.slice.call(this.body));
+};
+SecureResponse.prototype.json = function json() {
+  return JSON.parse(this.text());
+};
+function MemoryIdentityStore() {
+  this.identities = {};
+}
+MemoryIdentityStore.prototype.loadOrCreate = /*#__PURE__*/function () {
+  var _loadOrCreate = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee(appId) {
+    return _regenerator().w(function (_context) {
+      while (1) switch (_context.n) {
+        case 0:
+          if (this.identities[appId]) {
+            _context.n = 2;
+            break;
+          }
+          _context.n = 1;
+          return createIdentity();
+        case 1:
+          this.identities[appId] = _context.v.identity;
+        case 2:
+          return _context.a(2, this.identities[appId]);
+      }
+    }, _callee, this);
+  }));
+  function loadOrCreate(_x4) {
+    return _loadOrCreate.apply(this, arguments);
+  }
+  return loadOrCreate;
+}();
+function IndexedDbIdentityStore(configuration) {
+  configuration = configuration || {};
+  this.databaseName = configuration.databaseName || 'coolxer-secure-communication-v2';
+}
+IndexedDbIdentityStore.prototype.loadOrCreate = /*#__PURE__*/function () {
+  var _loadOrCreate2 = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee2(appId) {
+    var databaseName, db, existing, created;
+    return _regenerator().w(function (_context2) {
+      while (1) switch (_context2.n) {
+        case 0:
+          if (!(typeof indexedDB === 'undefined')) {
+            _context2.n = 1;
+            break;
+          }
+          throw new SecureError('SC_IDENTITY_STORE_UNAVAILABLE', 'IndexedDB is required');
+        case 1:
+          databaseName = this.databaseName;
+          _context2.n = 2;
+          return new Promise(function open(resolve, reject) {
+            var request = indexedDB.open(databaseName, 1);
+            request.onupgradeneeded = function upgrade() {
+              if (!request.result.objectStoreNames.contains('identity')) {
+                request.result.createObjectStore('identity');
+              }
+            };
+            request.onsuccess = function success() {
+              resolve(request.result);
+            };
+            request.onerror = function failed() {
+              reject(request.error);
+            };
+          });
+        case 2:
+          db = _context2.v;
+          _context2.n = 3;
+          return new Promise(function read(resolve, reject) {
+            var transaction = db.transaction('identity', 'readonly');
+            var request = transaction.objectStore('identity').get('installation-v2:' + appId);
+            request.onsuccess = function success() {
+              resolve(request.result || null);
+            };
+            request.onerror = function failed() {
+              reject(request.error);
+            };
+          });
+        case 3:
+          existing = _context2.v;
+          if (!existing) {
+            _context2.n = 4;
+            break;
+          }
+          db.close();
+          return _context2.a(2, identityFromStored(existing));
+        case 4:
+          _context2.n = 5;
+          return createIdentity();
+        case 5:
+          created = _context2.v;
+          _context2.n = 6;
+          return new Promise(function write(resolve, reject) {
+            var transaction = db.transaction('identity', 'readwrite');
+            transaction.objectStore('identity').put(created.stored, 'installation-v2:' + appId);
+            transaction.oncomplete = resolve;
+            transaction.onerror = function failed() {
+              reject(transaction.error);
+            };
+          });
+        case 6:
+          db.close();
+          return _context2.a(2, created.identity);
+      }
+    }, _callee2, this);
+  }));
+  function loadOrCreate(_x5) {
+    return _loadOrCreate2.apply(this, arguments);
+  }
+  return loadOrCreate;
+}();
+function identityFromStored(stored) {
+  return {
+    deviceId: stored.deviceId,
+    publicKeySPKI: function () {
+      var _publicKeySPKI = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee3() {
+        var _t, _t2;
+        return _regenerator().w(function (_context3) {
+          while (1) switch (_context3.n) {
+            case 0:
+              _t = Uint8Array;
+              _context3.n = 1;
+              return subtle().exportKey('spki', stored.publicKey);
+            case 1:
+              _t2 = _context3.v;
+              return _context3.a(2, new _t(_t2));
+          }
+        }, _callee3);
+      }));
+      function publicKeySPKI() {
+        return _publicKeySPKI.apply(this, arguments);
+      }
+      return publicKeySPKI;
+    }(),
+    sign: function () {
+      var _sign = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee4(data) {
+        var _t3, _t4;
+        return _regenerator().w(function (_context4) {
+          while (1) switch (_context4.n) {
+            case 0:
+              _t3 = Uint8Array;
+              _context4.n = 1;
+              return subtle().sign({
+                name: 'ECDSA',
+                hash: 'SHA-256'
+              }, stored.privateKey, data);
+            case 1:
+              _t4 = _context4.v;
+              return _context4.a(2, new _t3(_t4));
+          }
+        }, _callee4);
+      }));
+      function sign(_x6) {
+        return _sign.apply(this, arguments);
+      }
+      return sign;
+    }()
+  };
+}
+function createIdentity() {
+  return _createIdentity.apply(this, arguments);
+}
+function _createIdentity() {
+  _createIdentity = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee0() {
+    var keys, stored;
+    return _regenerator().w(function (_context0) {
+      while (1) switch (_context0.n) {
+        case 0:
+          _context0.n = 1;
           return subtle().generateKey({
             name: 'ECDSA',
             namedCurve: 'P-256'
           }, false, ['sign', 'verify']);
-        case 3:
-          keys = _context8.v;
-          created = {
+        case 1:
+          keys = _context0.v;
+          stored = {
             deviceId: globalThis.crypto.randomUUID(),
             privateKey: keys.privateKey,
             publicKey: keys.publicKey
           };
-          _context8.n = 4;
-          return store.save(created);
-        case 4:
-          return _context8.a(2, created);
+          return _context0.a(2, {
+            identity: identityFromStored(stored),
+            stored: stored
+          });
       }
-    }, _callee8);
+    }, _callee0);
   }));
-  return _installationIdentity.apply(this, arguments);
+  return _createIdentity.apply(this, arguments);
 }
 function transcript(response, request, clientEphemeral, installation, serverIdentity, serverEphemeral) {
   return ['SC1-HANDSHAKE', '1', V1_INTERNATIONAL_SUITE, request.appId, request.deviceId, request.deviceType, b64(clientEphemeral), b64(installation), b64(serverIdentity), b64(serverEphemeral), response.kid, response.sid, String(response.createdAt), String(response.expiresAt)].join('\n');
 }
 function SecureClient(configuration) {
-  configuration = configuration || {};
-  if (!configuration.baseUrl || !configuration.appId) {
-    throw new TypeError('baseUrl and appId are required');
-  }
-  var baseUrl = String(configuration.baseUrl).replace(/\/+$/, '');
-  if (!configuration.allowInsecureForTesting && !baseUrl.startsWith('https://')) {
-    throw new TypeError('baseUrl must use HTTPS');
-  }
-  var fetchImplementation = configuration.fetch || globalThis.fetch;
-  if (!fetchImplementation) throw new TypeError('fetch implementation is required');
-  var store = configuration.identityStore || new IndexedDbIdentityStore();
-  var deviceType = String(configuration.deviceType || 'H5').toUpperCase();
+  var config = configuration instanceof SecureClientConfig ? configuration : new SecureClientConfig(configuration);
   var enrollmentToken = null;
   var secureFetch = null;
   var session = null;
+  var initializePromise = null;
+  var generation = 0;
   this.enroll = function enroll(token) {
-    if (deviceType === 'H5') {
-      throw new SecureCommunicationError('SC_ENROLLMENT_NOT_SUPPORTED', 'H5 enrollment uses Origin policy');
+    if (config.deviceType === 'H5') {
+      throw new SecureError('SC_ENROLLMENT_NOT_SUPPORTED', 'H5 enrollment uses Origin policy');
     }
     if (!token || typeof token !== 'string') throw new TypeError('token is required');
     enrollmentToken = token;
   };
-  this.initialize = /*#__PURE__*/function () {
-    var _initialize = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee5() {
-      var identity, ephemeral, clientEphemeral, installation, startRequest, start, serverIdentity, pinned, serverEphemeral, hash, serverSigningKey, peerEphemeral, proof, _t, _t2, _t3, _t4, _t5, _t6, _t7, _t8, _t9, _t0;
+  var performInitialize = /*#__PURE__*/function () {
+    var _performInitialize = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee5(expectedGeneration) {
+      var execution, tokenUsed, identity, ephemeral, clientEphemeral, installation, startRequest, start, serverIdentity, serverEphemeral, hash, serverSigningKey, peerEphemeral, established, proof, finish, _t5, _t6, _t7, _t8, _t9, _t0, _t1, _t10, _t11, _t12, _t13;
       return _regenerator().w(function (_context5) {
-        while (1) switch (_context5.n) {
+        while (1) switch (_context5.p = _context5.n) {
           case 0:
-            if (!(secureFetch && session && Date.now() < session.expiresAt)) {
-              _context5.n = 1;
-              break;
-            }
-            return _context5.a(2, this);
-          case 1:
+            execution = executionSignal(null, config.requestTimeoutMillis);
+            tokenUsed = enrollmentToken;
+            _context5.p = 1;
             _context5.n = 2;
-            return installationIdentity(store);
+            return config.identityStore.loadOrCreate(config.appId);
           case 2:
             identity = _context5.v;
-            _context5.n = 3;
+            if (!(!identity || !identity.deviceId || typeof identity.publicKeySPKI !== 'function' || typeof identity.sign !== 'function')) {
+              _context5.n = 3;
+              break;
+            }
+            throw new SecureError('SC_IDENTITY_FAILED', 'Installation identity is invalid');
+          case 3:
+            _context5.n = 4;
             return subtle().generateKey({
               name: 'ECDH',
               namedCurve: 'P-256'
             }, false, ['deriveBits']);
-          case 3:
-            ephemeral = _context5.v;
-            _t = Uint8Array;
-            _context5.n = 4;
-            return subtle().exportKey('spki', ephemeral.publicKey);
           case 4:
-            _t2 = _context5.v;
-            clientEphemeral = new _t(_t2);
-            _t3 = Uint8Array;
+            ephemeral = _context5.v;
+            _t5 = Uint8Array;
             _context5.n = 5;
-            return subtle().exportKey('spki', identity.publicKey);
+            return subtle().exportKey('spki', ephemeral.publicKey);
           case 5:
-            _t4 = _context5.v;
-            installation = new _t3(_t4);
+            _t6 = _context5.v;
+            clientEphemeral = new _t5(_t6);
+            _t7 = Uint8Array;
+            _context5.n = 6;
+            return identity.publicKeySPKI();
+          case 6:
+            _t8 = _context5.v;
+            installation = new _t7(_t8);
             startRequest = {
               v: 1,
               suite: V1_INTERNATIONAL_SUITE,
-              appId: configuration.appId,
+              appId: config.appId,
               deviceId: identity.deviceId,
-              deviceType: deviceType,
+              deviceType: config.deviceType,
               clientEphemeralPublicKey: b64(clientEphemeral),
               installationPublicKey: b64(installation),
-              enrollmentToken: enrollmentToken,
+              enrollmentToken: tokenUsed,
               timestamp: Date.now()
             };
-            _t5 = responseJson;
-            _context5.n = 6;
-            return fetchImplementation(baseUrl + '/sc/v1/handshake', {
+            _t9 = responseJson;
+            _context5.n = 7;
+            return config.fetch(config.baseUrl + '/sc/v1/handshake', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                Accept: 'application/json'
               },
-              credentials: configuration.credentials,
+              credentials: config.credentials,
               cache: 'no-store',
               redirect: 'error',
-              body: JSON.stringify(startRequest)
+              body: JSON.stringify(startRequest),
+              signal: execution.signal
             });
-          case 6:
-            _context5.n = 7;
-            return _t5(_context5.v);
           case 7:
-            start = _context5.v;
-            enrollmentToken = null;
-            if (!(start.v !== 1 || start.suite !== V1_INTERNATIONAL_SUITE || !configuration.serverTrustAnchors || !configuration.serverTrustAnchors[start.kid])) {
-              _context5.n = 8;
-              break;
-            }
-            throw new SecureCommunicationError('SC_HANDSHAKE_FAILED', 'Untrusted server identity');
+            _context5.n = 8;
+            return _t9(_context5.v);
           case 8:
-            serverIdentity = unb64(start.serverIdentityPublicKey);
-            pinned = unb64(configuration.serverTrustAnchors[start.kid]);
-            if (equal(serverIdentity, pinned)) {
+            start = _context5.v;
+            if (!(start.v !== 1 || start.suite !== V1_INTERNATIONAL_SUITE || !config.serverTrustAnchors[start.kid])) {
               _context5.n = 9;
               break;
             }
-            throw new SecureCommunicationError('SC_HANDSHAKE_FAILED', 'Server identity pin mismatch');
+            throw new SecureError('SC_HANDSHAKE_FAILED', 'Untrusted server identity');
           case 9:
-            serverEphemeral = unb64(start.serverEphemeralPublicKey);
-            _t6 = Uint8Array;
-            _context5.n = 10;
-            return subtle().digest('SHA-256', new Uint8Array(utf8Encode(transcript(start, startRequest, clientEphemeral, installation, serverIdentity, serverEphemeral))));
+            serverIdentity = unb64(start.serverIdentityPublicKey);
+            if (equal(serverIdentity, unb64(config.serverTrustAnchors[start.kid]))) {
+              _context5.n = 10;
+              break;
+            }
+            throw new SecureError('SC_HANDSHAKE_FAILED', 'Server identity pin mismatch');
           case 10:
-            _t7 = _context5.v;
-            hash = new _t6(_t7);
+            serverEphemeral = unb64(start.serverEphemeralPublicKey);
+            _t0 = Uint8Array;
             _context5.n = 11;
+            return subtle().digest('SHA-256', new Uint8Array(utf8Encode(transcript(start, startRequest, clientEphemeral, installation, serverIdentity, serverEphemeral))));
+          case 11:
+            _t1 = _context5.v;
+            hash = new _t0(_t1);
+            _context5.n = 12;
             return subtle().importKey('spki', serverIdentity, {
               name: 'ECDSA',
               namedCurve: 'P-256'
             }, false, ['verify']);
-          case 11:
-            serverSigningKey = _context5.v;
-            _context5.n = 12;
-            return verifyP256Transcript(hash, unb64(start.signature), serverSigningKey);
           case 12:
+            serverSigningKey = _context5.v;
+            _context5.n = 13;
+            return verifyP256Transcript(hash, unb64(start.signature), serverSigningKey);
+          case 13:
             if (_context5.v) {
-              _context5.n = 13;
+              _context5.n = 14;
               break;
             }
-            throw new SecureCommunicationError('SC_HANDSHAKE_FAILED', 'Invalid server proof');
-          case 13:
-            _context5.n = 14;
+            throw new SecureError('SC_HANDSHAKE_FAILED', 'Invalid server proof');
+          case 14:
+            _context5.n = 15;
             return subtle().importKey('spki', serverEphemeral, {
               name: 'ECDH',
               namedCurve: 'P-256'
             }, false, []);
-          case 14:
+          case 15:
             peerEphemeral = _context5.v;
-            _context5.n = 15;
+            _context5.n = 16;
             return deriveAesGcmSession({
               kid: start.kid,
               sid: start.sid,
@@ -1330,84 +1544,163 @@ function SecureClient(configuration) {
               transcriptHash: hash,
               expiresAt: start.expiresAt
             });
-          case 15:
-            session = _context5.v;
-            _t8 = Uint8Array;
-            _context5.n = 16;
-            return subtle().sign({
-              name: 'ECDSA',
-              hash: 'SHA-256'
-            }, identity.privateKey, hash);
           case 16:
-            _t9 = _context5.v;
-            proof = new _t8(_t9);
-            _t0 = responseJson;
+            established = _context5.v;
+            _t10 = Uint8Array;
             _context5.n = 17;
-            return fetchImplementation(baseUrl + '/sc/v1/handshake/finish', {
+            return identity.sign(hash);
+          case 17:
+            _t11 = _context5.v;
+            proof = new _t10(_t11);
+            _t12 = responseJson;
+            _context5.n = 18;
+            return config.fetch(config.baseUrl + '/sc/v1/handshake/finish', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json'
+                Accept: 'application/json'
               },
-              credentials: configuration.credentials,
+              credentials: config.credentials,
               cache: 'no-store',
               redirect: 'error',
               body: JSON.stringify({
                 kid: start.kid,
                 sid: start.sid,
                 proof: b64(proof)
-              })
+              }),
+              signal: execution.signal
             });
-          case 17:
-            _context5.n = 18;
-            return _t0(_context5.v);
           case 18:
+            _context5.n = 19;
+            return _t12(_context5.v);
+          case 19:
+            finish = _context5.v;
+            if (finish.active) {
+              _context5.n = 20;
+              break;
+            }
+            throw new SecureError('SC_HANDSHAKE_FAILED', 'Handshake was not activated');
+          case 20:
+            if (!(generation !== expectedGeneration)) {
+              _context5.n = 21;
+              break;
+            }
+            throw new SecureError('SC_REQUEST_CANCELLED', 'Initialization was invalidated');
+          case 21:
+            session = established;
             secureFetch = createSecureFetch({
-              baseUrl: baseUrl,
-              codec: createV1Codec(session),
-              fetch: fetchImplementation,
-              credentials: configuration.credentials,
-              protectedHeaderNames: configuration.protectedHeaderNames || ['code'],
-              allowInsecureForTesting: configuration.allowInsecureForTesting
+              baseUrl: config.baseUrl,
+              codec: createV1Codec(session, {
+                allowedClockSkewMs: config.allowedClockSkewMillis
+              }),
+              fetch: config.fetch,
+              credentials: config.credentials,
+              allowInsecureLoopbackForTesting: config.allowInsecureLoopbackForTesting
             });
-            return _context5.a(2, this);
+            if (enrollmentToken === tokenUsed) enrollmentToken = null;
+            _context5.n = 23;
+            break;
+          case 22:
+            _context5.p = 22;
+            _t13 = _context5.v;
+            session = null;
+            secureFetch = null;
+            throw execution.error(_t13);
+          case 23:
+            _context5.p = 23;
+            execution.cleanup();
+            return _context5.f(23);
+          case 24:
+            return _context5.a(2);
         }
-      }, _callee5, this);
+      }, _callee5, null, [[1, 22, 23, 24]]);
     }));
-    function initialize() {
+    function performInitialize(_x7) {
+      return _performInitialize.apply(this, arguments);
+    }
+    return performInitialize;
+  }();
+  this.initialize = /*#__PURE__*/function () {
+    var _initialize = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee6(options) {
+      var expectedGeneration;
+      return _regenerator().w(function (_context6) {
+        while (1) switch (_context6.n) {
+          case 0:
+            options = options || {};
+            if (!(secureFetch && session && Date.now() < session.expiresAt)) {
+              _context6.n = 1;
+              break;
+            }
+            return _context6.a(2, this);
+          case 1:
+            if (!initializePromise) {
+              expectedGeneration = generation;
+              initializePromise = performInitialize(expectedGeneration)["finally"](function clear() {
+                initializePromise = null;
+              });
+            }
+            _context6.n = 2;
+            return waitFor(initializePromise, options.signal);
+          case 2:
+            return _context6.a(2, this);
+        }
+      }, _callee6, this);
+    }));
+    function initialize(_x8) {
       return _initialize.apply(this, arguments);
     }
     return initialize;
   }();
   this.request = /*#__PURE__*/function () {
-    var _request = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee6(method, path, protectedHeaders, body, requestId, options) {
-      return _regenerator().w(function (_context6) {
-        while (1) switch (_context6.n) {
+    var _request = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee7(value, options) {
+      var secureRequest, execution, result, mapped, _t14;
+      return _regenerator().w(function (_context7) {
+        while (1) switch (_context7.p = _context7.n) {
           case 0:
-            _context6.n = 1;
-            return this.initialize();
-          case 1:
             options = options || {};
-            return _context6.a(2, secureFetch(path, {
-              method: method,
-              headers: {
-                'Content-Type': options.contentType || 'application/json'
-              },
-              protectedHeaders: Object.assign({}, protectedHeaders || {}),
-              requestId: requestId,
-              body: body,
-              signal: options.signal,
-              credentials: configuration.credentials
-            }));
+            secureRequest = new SecureRequest(value);
+            _context7.n = 1;
+            return this.initialize({
+              signal: options.signal
+            });
+          case 1:
+            execution = executionSignal(options.signal, config.requestTimeoutMillis);
+            _context7.p = 2;
+            _context7.n = 3;
+            return secureFetch(secureRequest.logicalPath, {
+              method: secureRequest.method,
+              protectedHeaders: secureRequest.protectedHeaders,
+              body: secureRequest.body,
+              requestId: secureRequest.requestId || newRequestId(),
+              contentType: secureRequest.contentType,
+              signal: execution.signal,
+              credentials: config.credentials
+            });
+          case 3:
+            result = _context7.v;
+            return _context7.a(2, new SecureResponse(result.status, result.contentType, result.body));
+          case 4:
+            _context7.p = 4;
+            _t14 = _context7.v;
+            mapped = execution.error(_t14);
+            if (mapped.code === 'SC_UNKNOWN_SESSION') this.closeSession();
+            throw mapped;
+          case 5:
+            _context7.p = 5;
+            execution.cleanup();
+            return _context7.f(5);
+          case 6:
+            return _context7.a(2);
         }
-      }, _callee6, this);
+      }, _callee7, this, [[2, 4, 5, 6]]);
     }));
-    function request(_x5, _x6, _x7, _x8, _x9, _x0) {
+    function request(_x9, _x0) {
       return _request.apply(this, arguments);
     }
     return request;
   }();
   this.closeSession = function closeSession() {
+    generation += 1;
     session = null;
     secureFetch = null;
   };
@@ -1419,14 +1712,9 @@ function createSecureClient(configuration) {
 exports.IndexedDbIdentityStore = IndexedDbIdentityStore;
 exports.MemoryIdentityStore = MemoryIdentityStore;
 exports.SecureClient = SecureClient;
-exports.SecureCommunicationError = SecureCommunicationError;
-exports.V1_ENVELOPE_MEDIA_TYPE = V1_ENVELOPE_MEDIA_TYPE;
-exports.V1_INTERNATIONAL_SUITE = V1_INTERNATIONAL_SUITE;
+exports.SecureClientConfig = SecureClientConfig;
+exports.SecureError = SecureError;
+exports.SecureRequest = SecureRequest;
+exports.SecureResponse = SecureResponse;
 exports.createSecureClient = createSecureClient;
-exports.createSecureFetch = createSecureFetch;
-exports.createV1Codec = createV1Codec;
-exports.deriveAesGcmSession = deriveAesGcmSession;
-exports.importAesGcmSession = importAesGcmSession;
-exports.normalizeV1Path = normalizeV1Path;
-exports.verifyP256Transcript = verifyP256Transcript;
 //# sourceMappingURL=index.cjs.map

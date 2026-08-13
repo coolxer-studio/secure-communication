@@ -25,7 +25,7 @@
 
 ## 推荐接入顺序
 
-1. 在宿主应用中引入 `secure-communication-spring-boot-starter:1.0.0`。
+1. 在宿主应用中引入 `secure-communication-spring-boot-starter:1.1.0-SNAPSHOT`。
 2. 生成或加载 P-256 服务端身份密钥，并确定稳定的 `serverKeyId`。
 3. 配置 `spring.sc.*` 属性和独立的 Redis key 前缀。
 4. 提供身份、握手授权、安装注册、会话、重放和逻辑路由授权 Bean。
@@ -50,7 +50,7 @@ mvn test
 mvn clean install
 ```
 
-本地安装后，其他 Maven 工程即可引用 `1.0.0`。完整的 Bean 示例、密钥生成、CORS、
+本地安装后，其他 Maven 工程即可引用 `1.1.0-SNAPSHOT`。完整的 Bean 示例、密钥生成、CORS、
 注册令牌和故障排查见[接入与调试指南](../../docs/接入与调试指南.md)。
 
 协议字段与统一错误语义见[协议 v1](../../docs/protocol/协议v1.md)和

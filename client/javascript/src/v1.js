@@ -9,20 +9,25 @@ var MAX_SEQUENCE = 9007199254740991;
 var IDENTIFIER = /^[\x21-\x7e]{1,128}$/;
 var BASE64URL = /^[A-Za-z0-9_-]+$/;
 
-export function SecureCommunicationError(code, message, details) {
-  this.name = 'SecureCommunicationError';
+export function SecureError(code, message, details) {
+  this.name = 'SecureError';
   this.code = code;
   this.message = message || code;
-  this.status = details && details.status;
+  this.httpStatus = details && (details.httpStatus == null
+    ? details.status : details.httpStatus);
   this.traceId = details && details.traceId;
   this.cause = details && details.cause;
   if (Error.captureStackTrace) {
-    Error.captureStackTrace(this, SecureCommunicationError);
+    Error.captureStackTrace(this, SecureError);
   }
 }
 
-SecureCommunicationError.prototype = Object.create(Error.prototype);
-SecureCommunicationError.prototype.constructor = SecureCommunicationError;
+SecureError.prototype = Object.create(Error.prototype);
+SecureError.prototype.constructor = SecureError;
+
+// Internal compatibility name used by the protocol implementation. It is not
+// exported from the package root in 2.0.
+export var SecureCommunicationError = SecureError;
 
 function fail(code, message, cause) {
   throw new SecureCommunicationError(code, message, { cause: cause });

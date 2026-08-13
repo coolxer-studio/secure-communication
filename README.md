@@ -32,7 +32,7 @@ Secure Communication SDK 为已有 HTTP 业务增加一层应用层安全通信�
 - 每个会话独立的双向密钥、nonce 前缀和传输序号；
 - 请求与响应加密、完整性校验、时效校验和重放保护；
 - Spring Boot、Go `net/http`、Python ASGI 服务端的逻辑路由白名单、请求重写和响应加密；
-- JavaScript、Go、Android、iOS 客户端及统一生命周期接口；
+- JavaScript、Go、标准 Java、Android、iOS 客户端及统一生命周期接口；
 - Redis 会话、注册、重放保护和会话记录加密扩展点。
 
 以下能力不属于 1.0：旧协议兼容或自动降级、TCP/UDP/WebSocket 适配、动态协议
@@ -69,17 +69,19 @@ flowchart LR
 
 | 平台 | 交付物 | 适用场景 | 接入文档 |
 | --- | --- | --- | --- |
-| Spring Boot | `com.coolxer.securecommunication:secure-communication-spring-boot-starter:1.0.0` | 服务端安全接入层 | [Spring Boot](server/spring-boot/README.md) |
+| Spring Boot | `com.coolxer.securecommunication:secure-communication-spring-boot-starter:1.1.0-SNAPSHOT` | 服务端安全接入层 | [Spring Boot](server/spring-boot/README.md) |
 | Go Server | `github.com/coolxer/secure-communication-server-go` | `net/http` 服务端安全接入层 | [Go Server](server/go/README.md) |
 | Python Server | `secure-communication-server` | FastAPI / ASGI 服务端安全接入层 | [Python Server](server/python/README.md) |
-| JavaScript | `@coolxer/secure-communication-js@1.0.0` | Web / H5 | [JavaScript](client/javascript/README.md) |
-| Go | `github.com/coolxer/secure-communication-go` | Host / Emulator | [Go](client/go/README.md) |
-| Android | `com.coolxer.securecommunication:secure-communication-android:1.0.0` | Android Agent | [Android](client/android/README.md) |
-| iOS | Swift Package `SecureCommunication` | iOS Agent | [iOS](client/ios/README.md) |
+| JavaScript | `@coolxer/secure-communication-js@2.0.0` | Web / H5 | [JavaScript](client/javascript/README.md) |
+| Go | `github.com/coolxer/secure-communication-go/v2` | Host / Server / Emulator | [Go](client/go/README.md) |
+| Java | `com.coolxer.securecommunication:secure-communication-java:1.1.0-SNAPSHOT` | Java Host / Server / Emulator | [Java](client/java/README.md) |
+| Android | `com.coolxer.securecommunication:secure-communication:2.0.0` | Android Agent | [Android](client/android/README.md) |
+| iOS | Swift Package `SecureCommunication` 2.0.0 | iOS Agent | [iOS](client/ios/README.md) |
 
-客户端统一提供 `initialize`、`enroll`、`request` 和 `closeSession` 生命周期。H5
+客户端统一提供 `initialize`、`enroll`、`request` 和 `closeSession` 生命周期，公共
+模型和各语言执行上下文映射见[客户端接口契约](docs/客户端接口契约.md)。H5
 通过 HTTPS、Origin 准入和不可导出的 WebCrypto 安装密钥建立身份，不调用
-`enroll`；Host、Emulator、Android 和 iOS 首次安装必须使用短时、单次注册令牌。
+`enroll`；Host、Server、Emulator、Android 和 iOS 首次安装必须使用短时、单次注册令牌。
 
 ## 推荐接入顺序
 
@@ -98,6 +100,8 @@ SDK 不自动重试业务 POST。调用方重试时必须重新调用 `request`�
 
 - [文档中心](docs/文档中心.md)：架构、协议、安全、兼容性和各 SDK 导航；
 - [完整接入与调试指南](docs/接入与调试指南.md)：跨端配置、密钥生成、本地联调、错误排查和上线清单；
+- [客户端接口契约](docs/客户端接口契约.md)：跨端配置、生命周期、模型、错误和执行上下文；
+- [客户端 2.0 迁移指南](docs/客户端2.0迁移指南.md)：破坏性 API、版本和身份重新注册迁移；
 - [协议 v1 规范](docs/protocol/协议v1.md)：握手、信封、AAD、路由、重试和错误语义；
 - [协议错误码](docs/protocol/协议错误码.md)：统一 HTTP 状态、错误分类与重试策略；
 - [Security Policy](SECURITY.md)：受支持版本、漏洞报告和生产部署要求；
@@ -116,6 +120,7 @@ cd server/go && go test ./...
 cd server/python && pytest && python -m build
 cd client/javascript && npm ci && npm test
 cd client/go && go test ./...
+cd client/java && mvn test package
 cd client/android && ./gradlew :secure-communication:test
 cd client/ios && swift test
 ```
