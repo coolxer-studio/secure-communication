@@ -20,7 +20,6 @@ export interface SecureClientConfigOptions {
   allowedClockSkewMillis?: number;
   fetch?: typeof fetch;
   credentials?: RequestCredentials;
-  allowInsecureLoopbackForTesting?: boolean;
 }
 
 export class SecureClientConfig {

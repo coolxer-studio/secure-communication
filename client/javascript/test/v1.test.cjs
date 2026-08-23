@@ -44,7 +44,7 @@ test('package root exposes only the unified high-level contract', () => {
   assert.equal(error.traceId, 'trace');
 });
 
-test('configuration restricts device types and insecure HTTP to loopback', () => {
+test('configuration accepts HTTP and HTTPS and rejects other URL forms', () => {
   const common = {
     appId: 'agent',
     serverTrustAnchors: { kid: 'spki' },
@@ -54,17 +54,20 @@ test('configuration restricts device types and insecure HTTP to loopback', () =>
   const config = new publicApi.SecureClientConfig({
     ...common,
     baseUrl: 'http://127.0.0.1:8080',
-    deviceType: 'server',
-    allowInsecureLoopbackForTesting: true
+    deviceType: 'server'
   });
   assert.equal(config.deviceType, 'SERVER');
   assert.equal(config.requestTimeoutMillis, 15000);
   assert.equal(config.allowedClockSkewMillis, 120000);
-  assert.throws(() => new publicApi.SecureClientConfig({
+  const publicHttp = new publicApi.SecureClientConfig({
     ...common,
-    baseUrl: 'http://example.test',
-    allowInsecureLoopbackForTesting: true
-  }), /HTTPS/);
+    baseUrl: 'http://192.0.2.10:8080'
+  });
+  assert.equal(publicHttp.baseUrl, 'http://192.0.2.10:8080');
+  ['ftp://example.test', 'https://user:secret@example.test',
+    'https://example.test?x=1', 'https://example.test#fragment'].forEach(baseUrl => {
+    assert.throws(() => new publicApi.SecureClientConfig({ ...common, baseUrl }), /baseUrl/);
+  });
   assert.throws(() => new publicApi.SecureClientConfig({
     ...common,
     baseUrl: 'https://example.test',
@@ -282,13 +285,16 @@ test('fetch adapter tunnels logical methods and never silently downgrades', asyn
   assert.equal(calls[0].url, 'https://api.example.test/sc/v1/message');
   assert.equal(calls[0].init.method, 'POST');
   assert.equal(calls[0].init.redirect, 'error');
-  assert.throws(
-    () => createSecureFetch({
-      baseUrl: 'http://api.example.test',
-      codec,
-      fetch: async () => {}
-    }),
-    /HTTPS/);
+  assert.doesNotThrow(() => createSecureFetch({
+    baseUrl: 'http://api.example.test',
+    codec,
+    fetch: async () => {}
+  }));
+  assert.throws(() => createSecureFetch({
+    baseUrl: 'ftp://api.example.test',
+    codec,
+    fetch: async () => {}
+  }), /HTTP or HTTPS/);
 });
 
 test('derives identical P-256 ECDH/HKDF session material on both peers', async () => {

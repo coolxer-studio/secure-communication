@@ -14,7 +14,7 @@ public class SecureCommunicationProperties {
     public static class V1 {
         private boolean enabled = true;
         private String prefix = "/sc/v1/message";
-        private boolean requireTls = true;
+        private boolean requireTls;
         private Duration clockSkew = Duration.ofMinutes(5);
         private Duration replayTtl = Duration.ofMinutes(10);
         private Duration sessionTtl = Duration.ofMinutes(10);

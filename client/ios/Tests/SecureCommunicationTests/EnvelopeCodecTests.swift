@@ -4,6 +4,24 @@ import XCTest
 @testable import SecureCommunication
 
 final class EnvelopeCodecTests: XCTestCase {
+    func testConfigAcceptsHTTPAndHTTPSAndRejectsOtherURLForms() throws {
+        let anchors = ["kid": Data([1])]
+        let http = SecureClientConfig(
+            baseURL: URL(string: "http://192.0.2.10:8080")!, appID: "agent",
+            serverTrustAnchors: anchors)
+        XCTAssertNoThrow(try SecureClient(config: http))
+        let https = SecureClientConfig(
+            baseURL: URL(string: "https://example.test")!, appID: "agent",
+            serverTrustAnchors: anchors)
+        XCTAssertNoThrow(try SecureClient(config: https))
+        for value in ["ftp://example.test", "https://user:secret@example.test",
+                      "https://example.test?x=1", "https://example.test#fragment"] {
+            let config = SecureClientConfig(
+                baseURL: URL(string: value)!, appID: "agent", serverTrustAnchors: anchors)
+            XCTAssertThrowsError(try SecureClient(config: config))
+        }
+    }
+
     func testUnifiedRequestAndErrorModels() throws {
         let request = try SecureRequest(logicalPath: "/health")
         XCTAssertEqual(request.method, "GET")

@@ -9,7 +9,6 @@ public struct SecureClientConfig: Sendable {
     public let identityStore: any IdentityStore
     public let requestTimeout: TimeInterval
     public let allowedClockSkew: TimeInterval
-    public let allowInsecureLoopbackForTesting: Bool
 
     public init(
         baseURL: URL,
@@ -18,8 +17,7 @@ public struct SecureClientConfig: Sendable {
         deviceType: String = "IOS",
         identityStore: any IdentityStore = KeychainIdentityStore(),
         requestTimeout: TimeInterval = 15,
-        allowedClockSkew: TimeInterval = 120,
-        allowInsecureLoopbackForTesting: Bool = false
+        allowedClockSkew: TimeInterval = 120
     ) {
         self.baseURL = baseURL
         self.appID = appID
@@ -28,7 +26,6 @@ public struct SecureClientConfig: Sendable {
         self.identityStore = identityStore
         self.requestTimeout = requestTimeout
         self.allowedClockSkew = allowedClockSkew
-        self.allowInsecureLoopbackForTesting = allowInsecureLoopbackForTesting
     }
 }
 
@@ -57,13 +54,11 @@ public actor SecureClient {
 
     public init(config: SecureClientConfig, session: URLSession? = nil) throws {
         let scheme = config.baseURL.scheme?.lowercased()
-        let host = config.baseURL.host?.lowercased() ?? ""
-        let loopback = host == "localhost" || host == "::1" || host.hasPrefix("127.")
-        let secureURL = scheme == "https" || (config.allowInsecureLoopbackForTesting
-            && scheme == "http" && loopback)
+        let supportedURL = scheme == "https" || scheme == "http"
         let deviceTypes = Set(["H5", "HOST", "SERVER", "ANDROID", "IOS", "EMULATOR"])
-        guard secureURL, config.baseURL.user == nil, config.baseURL.query == nil,
-              config.baseURL.fragment == nil,
+        guard supportedURL, config.baseURL.host != nil,
+              config.baseURL.user == nil, config.baseURL.query == nil,
+              config.baseURL.password == nil, config.baseURL.fragment == nil,
               config.appID.range(of: #"^[A-Za-z0-9._:@/-]{1,128}$"#,
                                  options: .regularExpression) != nil,
               !config.serverTrustAnchors.isEmpty,

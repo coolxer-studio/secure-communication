@@ -4,8 +4,9 @@ Secure Communication SDK 为已有 HTTP 业务增加一层应用层安全通信�
 原来的 Controller、请求模型和幂等逻辑，客户端把逻辑 method、path、受保护 header
 和 body 封装到加密信封中，服务端完成握手、身份确认、解密、路由授权和响应加密。
 
-它不是 TLS 的替代品。生产环境仍必须使用 TLS 1.2 或更高版本；SDK 在 TLS 之上提供
-服务端身份固定、安装身份持有证明、会话密钥协商、机密性、完整性和重放保护。
+SDK 同时支持 HTTP 和 HTTPS，传输协议由宿主企业选择；生产环境仍建议使用 TLS 1.2
+或更高版本。应用层协议独立提供服务端身份固定、安装身份持有证明、会话密钥协商、
+业务载荷机密性、完整性和重放保护，但不隐藏目标地址、流量大小与时序。
 
 ## 解决什么问题
 
@@ -46,7 +47,7 @@ flowchart LR
     Web["Web / H5"] --> Client["Secure Client v1"]
     Host["Host / Emulator"] --> Client
     Mobile["Android / iOS"] --> Client
-    Client -->|"TLS 1.2+ / 加密信封"| Endpoints["/sc/v1/*"]
+    Client -->|"HTTP(S) / 加密信封"| Endpoints["/sc/v1/*"]
     Endpoints --> Server["Spring / Go / Python Server"]
     Server -->|"解密后的逻辑请求"| Routes["逻辑路由白名单"]
     Routes --> Controllers["现有 Controller / Service"]
@@ -80,7 +81,7 @@ flowchart LR
 
 客户端统一提供 `initialize`、`enroll`、`request` 和 `closeSession` 生命周期，公共
 模型和各语言执行上下文映射见[客户端接口契约](docs/客户端接口契约.md)。H5
-通过 HTTPS、Origin 准入和不可导出的 WebCrypto 安装密钥建立身份，不调用
+通过 Origin 准入、服务端信任锚和不可导出的 WebCrypto 安装密钥建立身份，不调用
 `enroll`；Host、Server、Emulator、Android 和 iOS 首次安装必须使用短时、单次注册令牌。
 
 ## 推荐接入顺序

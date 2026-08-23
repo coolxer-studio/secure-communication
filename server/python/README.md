@@ -17,7 +17,7 @@
 
 - Python 3.9 或更高版本；
 - FastAPI/ASGI；
-- 生产入口使用 TLS 1.2+，集群状态使用 Redis。
+- 支持 HTTP 和 HTTPS，生产入口建议使用 TLS 1.2+；集群状态使用 Redis。
 
 ```bash
 pip install secure-communication-server==1.0.0
@@ -77,9 +77,13 @@ installations = RedisInstallationRegistry(redis, "sc:v1:installation")
 tokens = RedisEnrollmentTokens(redis, "sc:v1:enrollment")
 ```
 
-默认配置与 Spring 完全一致。对于最大 256 KiB 的业务 body，建议设置 `max_envelope_bytes=600000`、`max_plaintext_bytes=400000`、`max_body_bytes=262144`。
+默认配置与 Spring 完全一致，不强制 TLS；企业需要只接受 HTTPS 时设置
+`require_tls=True`。对于最大 256 KiB 的业务 body，建议设置
+`max_envelope_bytes=600000`、`max_plaintext_bytes=400000`、`max_body_bytes=262144`。
 
-ASGI 中间件只信任 `scope["scheme"] == "https"`，不会读取 `X-Forwarded-Proto`。代理头解析只能由受信代理层完成。H5 CORS 应置于安全中间件之外，并限制 Origin、POST、OPTIONS 与 Content-Type。
+启用 `require_tls` 后，ASGI 中间件只信任 `scope["scheme"] == "https"`，不会读取
+`X-Forwarded-Proto`。代理头解析只能由受信代理层完成。H5 CORS 应置于安全中间件之外，
+并限制 Origin、POST、OPTIONS 与 Content-Type。
 
 ## Demo 与验证
 

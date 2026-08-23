@@ -1,6 +1,5 @@
 package com.coolxer.securecommunication;
 
-import java.net.InetAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Clock;
@@ -21,10 +20,9 @@ public final class SecureClientConfig {
     private final Duration requestTimeout;
     private final Duration allowedClockSkew;
     private final Clock clock;
-    private final boolean allowInsecureLoopbackForTesting;
 
     private SecureClientConfig(Builder builder) {
-        this.baseUrl = validateBaseUrl(builder.baseUrl, builder.allowInsecureLoopbackForTesting);
+        this.baseUrl = validateBaseUrl(builder.baseUrl);
         if (builder.appId == null || !builder.appId.matches("[A-Za-z0-9._:@/-]{1,128}")) {
             throw new IllegalArgumentException("Invalid appId");
         }
@@ -50,7 +48,6 @@ public final class SecureClientConfig {
         }
         this.allowedClockSkew = builder.allowedClockSkew;
         this.clock = builder.clock == null ? Clock.systemUTC() : builder.clock;
-        this.allowInsecureLoopbackForTesting = builder.allowInsecureLoopbackForTesting;
     }
 
     public static Builder builder() { return new Builder(); }
@@ -63,7 +60,6 @@ public final class SecureClientConfig {
     public Duration getRequestTimeout() { return requestTimeout; }
     public Duration getAllowedClockSkew() { return allowedClockSkew; }
     public Clock getClock() { return clock; }
-    public boolean isAllowInsecureLoopbackForTesting() { return allowInsecureLoopbackForTesting; }
 
     private static Duration requirePositive(Duration value, String name) {
         if (value == null || value.isZero() || value.isNegative()) {
@@ -72,28 +68,16 @@ public final class SecureClientConfig {
         return value;
     }
 
-    private static URI validateBaseUrl(URI value, boolean allowLoopback) {
+    private static URI validateBaseUrl(URI value) {
         if (value == null || value.getHost() == null || value.getUserInfo() != null
                 || value.getFragment() != null || value.getQuery() != null) {
             throw new IllegalArgumentException("Invalid baseUrl");
         }
         String scheme = value.getScheme() == null ? "" : value.getScheme().toLowerCase(Locale.ROOT);
-        if ("https".equals(scheme)) return value;
-        if (!"http".equals(scheme) || !allowLoopback || !isLoopback(value.getHost())) {
-            throw new IllegalArgumentException("baseUrl must use HTTPS");
+        if (!"https".equals(scheme) && !"http".equals(scheme)) {
+            throw new IllegalArgumentException("baseUrl must use HTTP or HTTPS");
         }
         return value;
-    }
-
-    private static boolean isLoopback(String host) {
-        if ("localhost".equalsIgnoreCase(host) || "::1".equals(host)
-                || "0:0:0:0:0:0:0:1".equals(host)) return true;
-        if (!host.matches("127(?:\\.[0-9]{1,3}){3}")) return false;
-        try {
-            return InetAddress.getByName(host).isLoopbackAddress();
-        } catch (Exception ignored) {
-            return false;
-        }
     }
 
     public static final class Builder {
@@ -106,7 +90,6 @@ public final class SecureClientConfig {
         private Duration requestTimeout = Duration.ofSeconds(15);
         private Duration allowedClockSkew = Duration.ofMinutes(2);
         private Clock clock = Clock.systemUTC();
-        private boolean allowInsecureLoopbackForTesting;
 
         public Builder baseUrl(URI value) { this.baseUrl = value; return this; }
         public Builder appId(String value) { this.appId = value; return this; }
@@ -117,7 +100,6 @@ public final class SecureClientConfig {
         public Builder requestTimeout(Duration value) { this.requestTimeout = value; return this; }
         public Builder allowedClockSkew(Duration value) { this.allowedClockSkew = value; return this; }
         public Builder clock(Clock value) { this.clock = value; return this; }
-        public Builder allowInsecureLoopbackForTesting(boolean value) { this.allowInsecureLoopbackForTesting = value; return this; }
         public SecureClientConfig build() { return new SecureClientConfig(this); }
     }
 }

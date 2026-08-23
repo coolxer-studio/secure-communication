@@ -15,7 +15,7 @@ class ProtocolError(Exception):
 
 @dataclass
 class Config:
-    enabled:bool=False; v1_enabled:bool=True; prefix:str=MESSAGE_ENDPOINT; require_tls:bool=True; allowed_suites:Sequence[str]=(SUITE,); clock_skew_seconds:float=300; replay_ttl_seconds:float=600; session_ttl_seconds:float=600; max_envelope_bytes:int=1_400_000; max_plaintext_bytes:int=1_048_576; max_body_bytes:int=1_048_576; clock:Callable[[],float]=time.time
+    enabled:bool=False; v1_enabled:bool=True; prefix:str=MESSAGE_ENDPOINT; require_tls:bool=False; allowed_suites:Sequence[str]=(SUITE,); clock_skew_seconds:float=300; replay_ttl_seconds:float=600; session_ttl_seconds:float=600; max_envelope_bytes:int=1_400_000; max_plaintext_bytes:int=1_048_576; max_body_bytes:int=1_048_576; clock:Callable[[],float]=time.time
     def validate(self):
         if not self.prefix.startswith("/") or self.clock_skew_seconds<0 or self.replay_ttl_seconds<=0 or self.session_ttl_seconds<=0 or self.max_envelope_bytes<256 or not 0<=self.max_body_bytes<=self.max_plaintext_bytes: raise ValueError("invalid secure communication config")
 

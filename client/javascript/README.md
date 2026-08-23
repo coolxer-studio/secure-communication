@@ -39,9 +39,10 @@ H5 不调用 `enroll`。默认 `IndexedDbIdentityStore` 在
 `sign(data)` 的身份。调用可通过 `{ signal: AbortSignal }` 取消；默认超时 15 秒，错误
 通过 `SecureError.code/httpStatus/traceId/cause` 暴露。
 
-生产只允许 HTTPS。本地测试可设置 `allowInsecureLoopbackForTesting: true`，且只接受
-localhost、127/8 或 IPv6 loopback。SDK 不重试业务请求；`SC_UNKNOWN_SESSION` 会清除
-会话，本次调用仍失败，由业务决定是否创建新的 SecureRequest 重试。
+`baseUrl` 可使用 HTTP 或 HTTPS，生产环境建议使用 HTTPS。非安全上下文中的浏览器
+可能不提供 WebCrypto，此时 SDK 返回 `SC_CRYPTO_UNAVAILABLE`；SDK 不绕过浏览器的
+安全上下文策略。SDK 不重试业务请求；`SC_UNKNOWN_SESSION` 会清除会话，本次调用仍
+失败，由业务决定是否创建新的 SecureRequest 重试。
 
 2.0 根包不再导出 `createSecureFetch` 或 codec 原语，也不兼容散参数 `request`。
 迁移说明见[客户端 2.0 迁移指南](../../docs/客户端2.0迁移指南.md)。

@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -55,16 +54,15 @@ type IdentityStore interface {
 }
 
 type Config struct {
-	BaseURL                         string
-	AppID                           string
-	DeviceType                      string
-	ServerTrustAnchors              map[string]string
-	IdentityStore                   IdentityStore
-	HTTPClient                      *http.Client
-	RequestTimeout                  time.Duration
-	AllowedClockSkew                time.Duration
-	AllowInsecureLoopbackForTesting bool
-	Clock                           func() time.Time
+	BaseURL            string
+	AppID              string
+	DeviceType         string
+	ServerTrustAnchors map[string]string
+	IdentityStore      IdentityStore
+	HTTPClient         *http.Client
+	RequestTimeout     time.Duration
+	AllowedClockSkew   time.Duration
+	Clock              func() time.Time
 }
 
 type Client struct {
@@ -135,9 +133,8 @@ type Request struct {
 func New(config Config) (*Client, error) {
 	parsed, err := url.Parse(config.BaseURL)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
-		(parsed.Scheme != "https" && !(config.AllowInsecureLoopbackForTesting &&
-			parsed.Scheme == "http" && isLoopback(parsed.Hostname()))) {
-		return nil, errors.New("secure communication base URL must use HTTPS")
+		(parsed.Scheme != "https" && parsed.Scheme != "http") {
+		return nil, errors.New("secure communication base URL must use HTTP or HTTPS")
 	}
 	if !validAppID(config.AppID) || config.IdentityStore == nil || len(config.ServerTrustAnchors) == 0 {
 		return nil, errors.New("app ID, identity store, and trust anchors are required")
@@ -752,11 +749,6 @@ func validAppID(value string) bool {
 		}
 	}
 	return true
-}
-
-func isLoopback(host string) bool {
-	ip := net.ParseIP(host)
-	return strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback())
 }
 
 func absDuration(value time.Duration) time.Duration {

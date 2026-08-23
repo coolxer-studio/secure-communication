@@ -6,6 +6,7 @@ import java.net.URI;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SecureClientConfigTest {
@@ -24,6 +25,20 @@ class SecureClientConfigTest {
     void rejectsUnknownDeviceType() {
         assertThrows(IllegalArgumentException.class,
                 () -> builder().deviceType("DESKTOP").build());
+    }
+
+    @Test
+    void acceptsHttpAndHttpsAndRejectsOtherUrlForms() {
+        assertDoesNotThrow(() -> builder().baseUrl(URI.create("http://192.0.2.10:8080")).build());
+        assertDoesNotThrow(() -> builder().baseUrl(URI.create("https://synap.example.test")).build());
+        assertThrows(IllegalArgumentException.class,
+                () -> builder().baseUrl(URI.create("ftp://synap.example.test")).build());
+        assertThrows(IllegalArgumentException.class,
+                () -> builder().baseUrl(URI.create("https://user:secret@synap.example.test")).build());
+        assertThrows(IllegalArgumentException.class,
+                () -> builder().baseUrl(URI.create("https://synap.example.test?x=1")).build());
+        assertThrows(IllegalArgumentException.class,
+                () -> builder().baseUrl(URI.create("https://synap.example.test#fragment")).build());
     }
 
     private static SecureClientConfig.Builder builder() {

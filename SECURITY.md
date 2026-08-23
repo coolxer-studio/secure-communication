@@ -4,7 +4,7 @@
 
 | Protocol | Support | Security status |
 | --- | --- | --- |
-| `sc/v1` | Supported in SDK 1.0 | Production protocol; TLS 1.2+ and authenticated encryption required |
+| `sc/v1` | Supported in SDK 1.0 | Authenticated application encryption; HTTP and HTTPS supported |
 | Historical standard/reserve/H5 channels | Unsupported | Removed; must not be exposed or used as a downgrade path |
 
 All Spring Boot, Go, and Python server SDKs and all client SDKs implement the
@@ -35,7 +35,10 @@ for a client release.
 
 ## Deployment requirements
 
-- TLS 1.2 or newer and endpoint identity verification are mandatory.
+- HTTPS with TLS 1.2 or newer is recommended for production; enterprises may
+  select HTTP when their deployment and residual-risk controls require it.
+- Server trust anchors and endpoint identity verification remain mandatory at
+  the application protocol layer for both HTTP and HTTPS.
 - `sc/v1` requires an authenticated-encryption suite and atomic replay protection.
 - Long-term server keys belong in KMS/HSM-backed providers, not configuration
   files or source control.

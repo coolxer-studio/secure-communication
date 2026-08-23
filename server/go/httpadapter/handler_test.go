@@ -64,6 +64,33 @@ func TestMiddlewareRewritesAndSeals(t *testing.T) {
 		t.Fatal("protected response mismatch")
 	}
 }
+
+func TestExplicitTLSPolicyRejectsHTTPHandshakeAndMessage(t *testing.T) {
+	cfg := sc.DefaultConfig()
+	cfg.Enabled = true
+	cfg.RequireTLS = true
+	handler := New(cfg, nil, nil, nil, nil)
+
+	handshake := httptest.NewRequest("POST", sc.HandshakeEndpoint, bytes.NewReader([]byte("{}")))
+	handshake.Header.Set("Content-Type", "application/json")
+	handshakeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(handshakeResponse, handshake)
+	if handshakeResponse.Code != sc.ErrTLSRequired.HTTPStatus ||
+		!bytes.Contains(handshakeResponse.Body.Bytes(), []byte(sc.ErrTLSRequired.Code)) {
+		t.Fatalf("HTTP handshake was not rejected by TLS policy: %d %s",
+			handshakeResponse.Code, handshakeResponse.Body.String())
+	}
+
+	message := httptest.NewRequest("POST", sc.MessageEndpoint, bytes.NewReader([]byte("{}")))
+	message.Header.Set("Content-Type", sc.EnvelopeMediaType)
+	messageResponse := httptest.NewRecorder()
+	handler.ServeHTTP(messageResponse, message)
+	if messageResponse.Code != sc.ErrTLSRequired.HTTPStatus ||
+		!bytes.Contains(messageResponse.Body.Bytes(), []byte(sc.ErrTLSRequired.Code)) {
+		t.Fatalf("HTTP message was not rejected by TLS policy: %d %s",
+			messageResponse.Code, messageResponse.Body.String())
+	}
+}
 func mustSeal(t *testing.T, k, n, a, p []byte) []byte {
 	t.Helper()
 	v, e := (sc.AESGCMAlgorithm{}).Seal(k, n, a, p)

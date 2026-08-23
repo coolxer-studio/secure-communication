@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- JavaScript、Go、Java、Android 和 iOS 客户端同时接受 HTTP 与 HTTPS base URL，并删除 `allowInsecureLoopbackForTesting` 配置项。
+- Spring Boot、Go 和 Python 服务端保留可选 TLS 强制策略，但默认同时接受 HTTP 与 HTTPS。
+- HTTPS 继续使用平台 TLS 校验；HTTP 的启用和外围安全策略由宿主企业负责。
+
 ## Client SDK 2.0.0
 
 ### Changed

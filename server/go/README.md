@@ -14,7 +14,7 @@
 ## 要求与安装
 
 - Go 1.21 或更高版本；
-- 生产入口必须使用 TLS 1.2+；
+- 支持 HTTP 和 HTTPS，生产入口建议使用 TLS 1.2+；
 - 集群部署使用 Redis，并用 32 字节记录密钥加密会话材料。
 
 ```bash
@@ -78,9 +78,9 @@ tokens := redisstore.EnrollmentTokens{
 
 生产环境使用 `redisstore.SessionRepository`、`ReplayProtector`、`InstallationRegistry` 与 `EnrollmentTokens`。四类数据使用独立前缀；会话仓库需要 `NewAESGCMRecordProtector(recordKey)`，`recordKey` 必须正好 32 字节且不得进入源码、镜像或日志。
 
-库默认与 Spring 属性一致：安全通信关闭、v1 开启、要求 TLS、时钟偏差 5 分钟、会话及重放 TTL 10 分钟、信封上限 1,400,000 字节、明文及 body 上限 1,048,576 字节。若业务 body 最大 256 KiB，建议分别设置 `MaxEnvelopeBytes=600000`、`MaxPlaintextBytes=400000`、`MaxBodyBytes=262144`。
+库默认与 Spring 属性一致：安全通信关闭、v1 开启、不强制 TLS、时钟偏差 5 分钟、会话及重放 TTL 10 分钟、信封上限 1,400,000 字节、明文及 body 上限 1,048,576 字节。企业需要只接受 HTTPS 时设置 `RequireTLS=true`。若业务 body 最大 256 KiB，建议分别设置 `MaxEnvelopeBytes=600000`、`MaxPlaintextBytes=400000`、`MaxBodyBytes=262144`。
 
-库只根据 `http.Request.TLS` 判断安全连接，不信任 `X-Forwarded-Proto`。代理后的 TLS 状态应由宿主受信代理配置建立。H5 CORS 预检需要在本 Handler 之前处理或交给下游，且只开放可信 Origin。
+启用 `RequireTLS` 后，库只根据 `http.Request.TLS` 判断安全连接，不信任 `X-Forwarded-Proto`。代理后的 TLS 状态应由宿主受信代理配置建立。H5 CORS 预检需要在本 Handler 之前处理或交给下游，且只开放可信 Origin。
 
 ## Demo 与验证
 

@@ -101,11 +101,10 @@ future.cancel(true);
 镜像层。更高安全要求应实现 `IdentityStore`，把 `InstallationIdentity.sign` 接到
 系统 KeyStore、HSM 或 KMS，私钥无需导出给 SDK。
 
-## TLS、本地调试和错误
+## HTTP(S)、TLS 和错误
 
-生产只允许 HTTPS，默认 transport 禁止重定向并限定 TLS 1.2/1.3。本机集成测试可以
-显式启用 `allowInsecureLoopbackForTesting(true)`，此时 HTTP 仍只接受 loopback 地址。
-SDK 不提供 trust-all TLS。
+`baseUrl` 可使用 HTTP 或 HTTPS，生产环境建议使用 HTTPS。默认 transport 禁止重定向；
+使用 HTTPS 时限定 TLS 1.2/1.3 并执行正常证书校验。SDK 不提供 trust-all TLS。
 
 ```java
 try {

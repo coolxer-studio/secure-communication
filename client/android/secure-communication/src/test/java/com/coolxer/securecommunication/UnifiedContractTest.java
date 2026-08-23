@@ -7,7 +7,6 @@ import java.util.Collections;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.fail;
 
 public class UnifiedContractTest {
     @Test public void requestUsesContractDefaultsAndDefensiveBodyCopies() {
@@ -19,22 +18,29 @@ public class UnifiedContractTest {
         assertNull(request.getRequestId());
     }
 
-    @Test public void configAcceptsServerAndLoopbackOnlyForTests() {
+    @Test public void configAcceptsHttpAndHttpsAndRejectsOtherUrlForms() {
         SecureClientConfig config = SecureClientConfig.builder()
                 .baseUrl("http://127.0.0.1:8080")
                 .appId("agent")
                 .deviceType("SERVER")
                 .serverTrustAnchors(Collections.singletonMap("kid", "spki"))
-                .allowInsecureLoopbackForTesting(true)
                 .build();
         assertEquals("SERVER", config.getDeviceType());
-        try {
-            SecureClientConfig.builder().baseUrl("http://example.test")
-                    .appId("agent").serverTrustAnchors(
-                            Collections.singletonMap("kid", "spki"))
-                    .allowInsecureLoopbackForTesting(true).build();
-            fail("non-loopback HTTP must be rejected");
-        } catch (IllegalArgumentException expected) { }
+        buildConfig("http://192.0.2.10:8080");
+        buildConfig("https://example.test");
+        for (String baseUrl : new String[]{"ftp://example.test",
+                "https://user:secret@example.test", "https://example.test?x=1",
+                "https://example.test#fragment"}) {
+            try {
+                buildConfig(baseUrl);
+                org.junit.Assert.fail("invalid base URL must be rejected: " + baseUrl);
+            } catch (IllegalArgumentException expected) { }
+        }
+    }
+
+    private static SecureClientConfig buildConfig(String baseUrl) {
+        return SecureClientConfig.builder().baseUrl(baseUrl).appId("agent")
+                .serverTrustAnchors(Collections.singletonMap("kid", "spki")).build();
     }
 
     @Test public void errorExposesStableFields() {

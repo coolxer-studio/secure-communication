@@ -4,6 +4,7 @@ import com.coolxer.securecommunication.spring.SecureCommunicationAutoConfigurati
 import com.coolxer.securecommunication.handshake.HandshakeController;
 import com.coolxer.securecommunication.servlet.V1SecureCommunicationFilter;
 import com.coolxer.securecommunication.spi.KeyProvider;
+import com.coolxer.securecommunication.spi.SecurityPolicy;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -31,8 +32,14 @@ class SecureAutoConfigurationTest {
                             "v1SecureCommunicationFilter", FilterRegistrationBean.class);
                     assertThat(registration.getFilter())
                             .isInstanceOf(V1SecureCommunicationFilter.class);
+                    assertThat(context.getBean(SecurityPolicy.class).requireTls()).isFalse();
                     assertThat(context).doesNotHaveBean("legacySecureCommunicationFilter");
                 });
+
+        contextRunner.withPropertyValues(
+                        "spring.sc.enabled=true", "spring.sc.v1.require-tls=true")
+                .run(context -> assertThat(
+                        context.getBean(SecurityPolicy.class).requireTls()).isTrue());
     }
 
     @Test

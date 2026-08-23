@@ -86,9 +86,8 @@ func TestUnifiedConfigAndRequestDefaults(t *testing.T) {
 	directory := t.TempDir()
 	client, err := New(Config{
 		BaseURL: "http://127.0.0.1:8080", AppID: "agent", DeviceType: "server",
-		ServerTrustAnchors:              map[string]string{"kid": "spki"},
-		IdentityStore:                   FileIdentityStore{Path: filepath.Join(directory, "identity-v2.json")},
-		AllowInsecureLoopbackForTesting: true,
+		ServerTrustAnchors: map[string]string{"kid": "spki"},
+		IdentityStore:      FileIdentityStore{Path: filepath.Join(directory, "identity-v2.json")},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -98,12 +97,23 @@ func TestUnifiedConfigAndRequestDefaults(t *testing.T) {
 		t.Fatal("unified configuration defaults were not applied")
 	}
 	if _, err := New(Config{
-		BaseURL: "http://example.test", AppID: "agent",
-		ServerTrustAnchors:              map[string]string{"kid": "spki"},
-		IdentityStore:                   FileIdentityStore{Path: filepath.Join(directory, "other.json")},
-		AllowInsecureLoopbackForTesting: true,
-	}); err == nil {
-		t.Fatal("non-loopback HTTP must be rejected")
+		BaseURL: "http://192.0.2.10:8080", AppID: "agent",
+		ServerTrustAnchors: map[string]string{"kid": "spki"},
+		IdentityStore:      FileIdentityStore{Path: filepath.Join(directory, "other.json")},
+	}); err != nil {
+		t.Fatalf("public HTTP URL must be accepted: %v", err)
+	}
+	for _, baseURL := range []string{
+		"ftp://example.test", "https://user:secret@example.test",
+		"https://example.test?x=1", "https://example.test#fragment",
+	} {
+		if _, err := New(Config{
+			BaseURL: baseURL, AppID: "agent",
+			ServerTrustAnchors: map[string]string{"kid": "spki"},
+			IdentityStore:      FileIdentityStore{Path: filepath.Join(directory, "invalid.json")},
+		}); err == nil {
+			t.Fatalf("invalid base URL must be rejected: %s", baseURL)
+		}
 	}
 }
 

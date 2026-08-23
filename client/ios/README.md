@@ -31,7 +31,8 @@ SecureClient 是可长期复用的 actor。并发初始化共享一次握手，�
 1.x 身份。升级后首次运行必须重新 enrollment。自定义 IdentityStore 返回具有 deviceID、
 `publicKeySPKI()` 和 `sign(data)` 的 InstallationIdentity。
 
-生产只允许 HTTPS。本地明文开关只接受 localhost、127/8 和 IPv6 loopback。错误统一通过
+`baseURL` 可使用 HTTP 或 HTTPS，生产环境建议使用 HTTPS。HTTP 地址可能需要宿主在
+App Transport Security 中配置最小范围的例外；该策略不由 SDK 绕过。错误统一通过
 SecureError 的 code、httpStatus、traceID 和 cause 暴露；超时和取消分别映射为
 `SC_REQUEST_TIMEOUT`、`SC_REQUEST_CANCELLED`。
 

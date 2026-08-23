@@ -50,8 +50,7 @@ final class SecureClientIntegrationTest {
         SecureClientConfig config = SecureClientConfig.builder()
                 .baseUrl(server.baseUrl()).appId("java-host").deviceType("HOST")
                 .serverTrustAnchors(Map.of(server.keyId(), server.publicKeyBase64()))
-                .identityStore(appId -> identity)
-                .allowInsecureLoopbackForTesting(true).build();
+                .identityStore(appId -> identity).build();
         try (SecureClient client = SecureClients.create(config)) {
             client.enroll("single-use-token");
             List<CompletableFuture<Void>> initializers = new ArrayList<>();
@@ -87,8 +86,7 @@ final class SecureClientIntegrationTest {
         SecureClientConfig config = SecureClientConfig.builder()
                 .baseUrl(server.baseUrl()).appId("timeout-host")
                 .serverTrustAnchors(Map.of(server.keyId(), server.publicKeyBase64()))
-                .identityStore(appId -> identity)
-                .allowInsecureLoopbackForTesting(true).build();
+                .identityStore(appId -> identity).build();
         try (SecureClient client = SecureClients.create(config)) {
             client.enroll("single-use-token");
             client.initialize();

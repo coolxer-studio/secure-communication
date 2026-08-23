@@ -193,7 +193,7 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{V1Enabled: true, RequireTLS: true, Prefix: MessageEndpoint, AllowedSuites: map[string]bool{InternationalSuite: true}, ClockSkew: 5 * time.Minute, ReplayTTL: 10 * time.Minute, SessionTTL: 10 * time.Minute, MaxEnvelopeBytes: 1_400_000, MaxPlaintextBytes: 1_048_576, MaxBodyBytes: 1_048_576, Clock: time.Now}
+	return Config{V1Enabled: true, RequireTLS: false, Prefix: MessageEndpoint, AllowedSuites: map[string]bool{InternationalSuite: true}, ClockSkew: 5 * time.Minute, ReplayTTL: 10 * time.Minute, SessionTTL: 10 * time.Minute, MaxEnvelopeBytes: 1_400_000, MaxPlaintextBytes: 1_048_576, MaxBodyBytes: 1_048_576, Clock: time.Now}
 }
 func (c Config) Validate() error {
 	if c.Prefix == "" || c.Prefix[0] != '/' || c.Clock == nil || c.ClockSkew < 0 || c.ReplayTTL <= 0 || c.SessionTTL <= 0 || c.MaxEnvelopeBytes < 256 || c.MaxPlaintextBytes < 0 || c.MaxBodyBytes < 0 || c.MaxBodyBytes > c.MaxPlaintextBytes {

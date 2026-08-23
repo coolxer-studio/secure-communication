@@ -46,9 +46,9 @@ API 23+ 使用不可导出的 EC Keystore 密钥；API 21–22 使用不可导�
 enrollment。也可注入实现
 `IdentityStore.loadOrCreate(appId)` 的自定义硬件身份存储。
 
-生产只允许 HTTPS。本地明文开关只接受 loopback；Android 模拟器的 `10.0.2.2` 不属于
-loopback，应使用受信 HTTPS。SDK 不重试业务请求，统一错误字段为 code、httpStatus、
-traceId 和 cause。
+`baseUrl` 可使用 HTTP 或 HTTPS，生产环境建议使用 HTTPS。Android 9 及更高版本可能
+需要宿主通过 Network Security Configuration 显式允许目标域名的明文流量；该策略不由
+SDK 绕过。SDK 不重试业务请求，统一错误字段为 code、httpStatus、traceId 和 cause。
 
 2.0 删除 `SecureClient.Config`、散参数 request 和公开低层客户端入口。迁移说明见
 [客户端 2.0 迁移指南](../../docs/客户端2.0迁移指南.md)。

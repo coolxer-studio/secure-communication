@@ -12,7 +12,7 @@ final class SecureCommunicationClient: Sendable {
     ) throws {
         guard let endpoint = URL(string: "/sc/v1/message", relativeTo: baseURL)?.absoluteURL
         else {
-            throw SecureError.invalidConfiguration("baseURL must use HTTPS")
+            throw SecureError.invalidConfiguration("baseURL is invalid")
         }
         self.endpoint = endpoint
         self.codec = codec

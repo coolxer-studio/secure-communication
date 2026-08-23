@@ -42,7 +42,7 @@ spring:
     v1:
       enabled: true
       prefix: /sc/v1/message
-      require-tls: true
+      require-tls: false
       allowed-suites:
         - P256_HKDF_SHA256_AES256_GCM
       clock-skew: 2m
@@ -55,7 +55,8 @@ spring:
 
 `max-body-bytes` 限制解密后的业务 body；`max-plaintext-bytes` 还包含保护对象和
 Base64URL 膨胀；`max-envelope-bytes` 再包含 AEAD 密文和外层信封。三者必须按顺序
-递增。生产环境保持 `require-tls: true`，只有本机联调才允许临时关闭。
+递增。`require-tls` 默认为 `false`，HTTP 和 HTTPS 均可使用；企业需要只接受 HTTPS 时
+显式设置为 `true`。生产环境仍建议使用 TLS 1.2+。
 
 `spring.sc.enabled` 默认是 `false`。启用后，消息过滤器注册顺序为 `-200`，固定
 处理配置的 `/sc/v1/message`；握手 Controller 固定处理另外两个握手入口。

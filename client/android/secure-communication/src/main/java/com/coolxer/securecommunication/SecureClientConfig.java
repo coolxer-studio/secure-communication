@@ -17,7 +17,6 @@ public final class SecureClientConfig {
     private final OkHttpClient httpClient;
     private final long requestTimeoutMillis;
     private final long allowedClockSkewMillis;
-    private final boolean allowInsecureLoopbackForTesting;
 
     private SecureClientConfig(Builder builder) {
         HttpUrl parsed = HttpUrl.parse(builder.baseUrl);
@@ -25,11 +24,8 @@ public final class SecureClientConfig {
                 || parsed.query() != null || parsed.fragment() != null) {
             throw new IllegalArgumentException("Invalid baseUrl");
         }
-        boolean loopback = isLoopback(parsed.host());
-        if (!"https".equals(parsed.scheme())
-                && !(builder.allowInsecureLoopbackForTesting
-                && "http".equals(parsed.scheme()) && loopback)) {
-            throw new IllegalArgumentException("baseUrl must use HTTPS");
+        if (!"https".equals(parsed.scheme()) && !"http".equals(parsed.scheme())) {
+            throw new IllegalArgumentException("baseUrl must use HTTP or HTTPS");
         }
         if (builder.appId == null || !builder.appId.matches("[A-Za-z0-9._:@/-]{1,128}")) {
             throw new IllegalArgumentException("Invalid appId");
@@ -54,7 +50,6 @@ public final class SecureClientConfig {
         this.httpClient = builder.httpClient;
         this.requestTimeoutMillis = builder.requestTimeoutMillis;
         this.allowedClockSkewMillis = builder.allowedClockSkewMillis;
-        this.allowInsecureLoopbackForTesting = builder.allowInsecureLoopbackForTesting;
     }
 
     public static Builder builder() { return new Builder(); }
@@ -66,17 +61,6 @@ public final class SecureClientConfig {
     public OkHttpClient getHttpClient() { return httpClient; }
     public long getRequestTimeoutMillis() { return requestTimeoutMillis; }
     public long getAllowedClockSkewMillis() { return allowedClockSkewMillis; }
-    public boolean isAllowInsecureLoopbackForTesting() { return allowInsecureLoopbackForTesting; }
-
-    private static boolean isLoopback(String host) {
-        if ("localhost".equalsIgnoreCase(host) || "::1".equals(host)) return true;
-        if (!host.matches("127(?:\\.[0-9]{1,3}){3}")) return false;
-        String[] parts = host.split("\\.");
-        for (String part : parts) {
-            if (Integer.parseInt(part) > 255) return false;
-        }
-        return true;
-    }
 
     public static final class Builder {
         private String baseUrl;
@@ -87,7 +71,6 @@ public final class SecureClientConfig {
         private OkHttpClient httpClient;
         private long requestTimeoutMillis = 15_000;
         private long allowedClockSkewMillis = 120_000;
-        private boolean allowInsecureLoopbackForTesting;
 
         public Builder baseUrl(String value) { baseUrl = value; return this; }
         public Builder appId(String value) { appId = value; return this; }
@@ -97,9 +80,6 @@ public final class SecureClientConfig {
         public Builder httpClient(OkHttpClient value) { httpClient = value; return this; }
         public Builder requestTimeoutMillis(long value) { requestTimeoutMillis = value; return this; }
         public Builder allowedClockSkewMillis(long value) { allowedClockSkewMillis = value; return this; }
-        public Builder allowInsecureLoopbackForTesting(boolean value) {
-            allowInsecureLoopbackForTesting = value; return this;
-        }
         public SecureClientConfig build() { return new SecureClientConfig(this); }
     }
 }

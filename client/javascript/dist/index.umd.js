@@ -846,12 +846,10 @@
     }
     return base64Url(globalThis.crypto.getRandomValues(new Uint8Array(16)));
   }
-  function requireHttps(baseUrl, allowInsecureLoopbackForTesting) {
+  function normalizedBaseUrl$1(baseUrl) {
     var parsed = new URL(baseUrl);
-    var host = parsed.hostname.toLowerCase();
-    var loopback = host === 'localhost' || host === '[::1]' || host === '::1' || /^127(?:\.\d{1,3}){3}$/.test(host);
-    if (parsed.protocol !== 'https:' && !(allowInsecureLoopbackForTesting && parsed.protocol === 'http:' && loopback)) {
-      throw new TypeError('baseUrl must use HTTPS');
+    if (!parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new TypeError('baseUrl must use HTTP or HTTPS without credentials, query, or fragment');
     }
     return parsed.toString().replace(/\/+$/, '');
   }
@@ -881,7 +879,7 @@
     if (!fetchImplementation) {
       throw new TypeError('fetch implementation is required');
     }
-    var baseUrl = requireHttps(configuration.baseUrl, configuration.allowInsecureLoopbackForTesting === true);
+    var baseUrl = normalizedBaseUrl$1(configuration.baseUrl);
     var endpoint = baseUrl + (configuration.endpoint || '/sc/v1/message');
     return /*#__PURE__*/function () {
       var _secureFetch = _asyncToGenerator(/*#__PURE__*/_regenerator().m(function _callee(path, init) {
@@ -1019,26 +1017,18 @@
     if (typeof value === 'string') return new Uint8Array(utf8Encode(value));
     throw new TypeError('body must be a string, Uint8Array, or ArrayBuffer');
   }
-  function isLoopback(hostname) {
-    var host = String(hostname || '').toLowerCase();
-    if (host === 'localhost' || host === '[::1]' || host === '::1') return true;
-    var parts = host.split('.');
-    return parts.length === 4 && parts[0] === '127' && parts.every(function valid(part) {
-      return /^\d{1,3}$/.test(part) && Number(part) <= 255;
-    });
-  }
-  function normalizedBaseUrl(value, allowLoopback) {
+  function normalizedBaseUrl(value) {
     var parsed;
     try {
       parsed = new URL(String(value));
     } catch (error) {
       throw new TypeError('baseUrl is invalid');
     }
-    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    if (!parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash) {
       throw new TypeError('baseUrl is invalid');
     }
-    if (parsed.protocol !== 'https:' && !(allowLoopback && parsed.protocol === 'http:' && isLoopback(parsed.hostname))) {
-      throw new TypeError('baseUrl must use HTTPS');
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      throw new TypeError('baseUrl must use HTTP or HTTPS');
     }
     return parsed.toString().replace(/\/+$/, '');
   }
@@ -1173,8 +1163,7 @@
     if (!configuration.appId || !/^[A-Za-z0-9._:@/-]{1,128}$/.test(configuration.appId)) {
       throw new TypeError('appId is invalid');
     }
-    this.allowInsecureLoopbackForTesting = configuration.allowInsecureLoopbackForTesting === true;
-    this.baseUrl = normalizedBaseUrl(configuration.baseUrl, this.allowInsecureLoopbackForTesting);
+    this.baseUrl = normalizedBaseUrl(configuration.baseUrl);
     this.appId = configuration.appId;
     this.deviceType = String(configuration.deviceType || 'H5').toUpperCase();
     if (DEVICE_TYPES.indexOf(this.deviceType) < 0) throw new TypeError('deviceType is invalid');
@@ -1598,8 +1587,7 @@
                   allowedClockSkewMs: config.allowedClockSkewMillis
                 }),
                 fetch: config.fetch,
-                credentials: config.credentials,
-                allowInsecureLoopbackForTesting: config.allowInsecureLoopbackForTesting
+                credentials: config.credentials
               });
               if (enrollmentToken === tokenUsed) enrollmentToken = null;
               _context5.n = 23;

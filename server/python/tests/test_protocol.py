@@ -8,6 +8,9 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from secure_communication_server import *
 
 ROOT=Path(__file__).parents[3]
+def test_default_config_allows_http_transport():
+    assert Config().require_tls is False
+
 @pytest.mark.parametrize("name",["aes-256-gcm-request.json","aes-256-gcm-response.json"])
 def test_vectors(name):
     v=json.loads((ROOT/"protocol/test-vectors"/name).read_text());key=bytes.fromhex(v["keyHex"]);prefix=bytes.fromhex(v["noncePrefixHex"]);n=nonce(prefix,v["sequence"]);assert b64e(n)==v["nonceBase64Url"]

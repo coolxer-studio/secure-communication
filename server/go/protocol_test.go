@@ -22,6 +22,12 @@ type testVector struct {
 	LogicalStatus                                                                                                                                          int
 }
 
+func TestDefaultConfigAllowsHTTPTransport(t *testing.T) {
+	if DefaultConfig().RequireTLS {
+		t.Fatal("default config must allow both HTTP and HTTPS")
+	}
+}
+
 func TestAESGCMVectors(t *testing.T) {
 	for _, name := range []string{"aes-256-gcm-request.json", "aes-256-gcm-response.json"} {
 		data, e := os.ReadFile("../../protocol/test-vectors/" + name)

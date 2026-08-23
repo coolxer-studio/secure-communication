@@ -69,27 +69,16 @@ function bodyBytes(value) {
   throw new TypeError('body must be a string, Uint8Array, or ArrayBuffer');
 }
 
-function isLoopback(hostname) {
-  var host = String(hostname || '').toLowerCase();
-  if (host === 'localhost' || host === '[::1]' || host === '::1') return true;
-  var parts = host.split('.');
-  return parts.length === 4 && parts[0] === '127'
-    && parts.every(function valid(part) {
-      return /^\d{1,3}$/.test(part) && Number(part) <= 255;
-    });
-}
-
-function normalizedBaseUrl(value, allowLoopback) {
+function normalizedBaseUrl(value) {
   var parsed;
   try { parsed = new URL(String(value)); } catch (error) {
     throw new TypeError('baseUrl is invalid');
   }
-  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+  if (!parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new TypeError('baseUrl is invalid');
   }
-  if (parsed.protocol !== 'https:'
-      && !(allowLoopback && parsed.protocol === 'http:' && isLoopback(parsed.hostname))) {
-    throw new TypeError('baseUrl must use HTTPS');
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new TypeError('baseUrl must use HTTP or HTTPS');
   }
   return parsed.toString().replace(/\/+$/, '');
 }
@@ -168,9 +157,7 @@ export function SecureClientConfig(configuration) {
   if (!configuration.appId || !/^[A-Za-z0-9._:@/-]{1,128}$/.test(configuration.appId)) {
     throw new TypeError('appId is invalid');
   }
-  this.allowInsecureLoopbackForTesting = configuration.allowInsecureLoopbackForTesting === true;
-  this.baseUrl = normalizedBaseUrl(
-    configuration.baseUrl, this.allowInsecureLoopbackForTesting);
+  this.baseUrl = normalizedBaseUrl(configuration.baseUrl);
   this.appId = configuration.appId;
   this.deviceType = String(configuration.deviceType || 'H5').toUpperCase();
   if (DEVICE_TYPES.indexOf(this.deviceType) < 0) throw new TypeError('deviceType is invalid');
@@ -387,8 +374,7 @@ export function SecureClient(configuration) {
       secureFetch = createSecureFetch({
         baseUrl: config.baseUrl, codec: createV1Codec(session, {
           allowedClockSkewMs: config.allowedClockSkewMillis
-        }), fetch: config.fetch, credentials: config.credentials,
-        allowInsecureLoopbackForTesting: config.allowInsecureLoopbackForTesting
+        }), fetch: config.fetch, credentials: config.credentials
       });
       if (enrollmentToken === tokenUsed) enrollmentToken = null;
     } catch (error) {

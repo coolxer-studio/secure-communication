@@ -103,14 +103,11 @@ function newRequestId() {
   return base64Url(globalThis.crypto.getRandomValues(new Uint8Array(16)));
 }
 
-function requireHttps(baseUrl, allowInsecureLoopbackForTesting) {
+function normalizedBaseUrl(baseUrl) {
   var parsed = new URL(baseUrl);
-  var host = parsed.hostname.toLowerCase();
-  var loopback = host === 'localhost' || host === '[::1]' || host === '::1'
-    || /^127(?:\.\d{1,3}){3}$/.test(host);
-  if (parsed.protocol !== 'https:'
-      && !(allowInsecureLoopbackForTesting && parsed.protocol === 'http:' && loopback)) {
-    throw new TypeError('baseUrl must use HTTPS');
+  if (!parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash
+      || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) {
+    throw new TypeError('baseUrl must use HTTP or HTTPS without credentials, query, or fragment');
   }
   return parsed.toString().replace(/\/+$/, '');
 }
@@ -143,8 +140,7 @@ export function createSecureFetch(configuration) {
   if (!fetchImplementation) {
     throw new TypeError('fetch implementation is required');
   }
-  var baseUrl = requireHttps(
-    configuration.baseUrl, configuration.allowInsecureLoopbackForTesting === true);
+  var baseUrl = normalizedBaseUrl(configuration.baseUrl);
   var endpoint = baseUrl + (configuration.endpoint || '/sc/v1/message');
 
   return async function secureFetch(path, init) {
