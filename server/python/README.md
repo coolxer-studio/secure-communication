@@ -1,4 +1,4 @@
-# Secure Communication Python Server 1.0
+# Secure Communication Python Server 1.0.0（protocol v1）
 
 本目录是协议 v1 的 Python/FastAPI 服务端实现。`secure_communication_server` 提供异步 SPI、握手和密码核心、ASGI 中间件、FastAPI 握手路由及 Redis 状态实现；`demo/app.py` 是最小宿主。
 
@@ -19,8 +19,11 @@
 - FastAPI/ASGI；
 - 支持 HTTP 和 HTTPS，生产入口建议使用 TLS 1.2+；集群状态使用 Redis。
 
+`pyproject.toml` 当前声明 `1.0.0`，但仓库本身不能证明 PyPI 制品已经发布。从源码安装：
+
 ```bash
-pip install secure-communication-server==1.0.0
+cd server/python
+python -m pip install '.[test]'
 ```
 
 ## 最小接入
@@ -39,6 +42,8 @@ app.add_middleware(SecureCommunicationMiddleware, config=config, messages=messag
 ```
 
 必须提供服务端 P-256 身份、握手授权、注册令牌和精确逻辑路由白名单。默认拒绝实现不会开放任何安全请求。Redis 生产实现位于 `secure_communication_server.redis_store`，使用 `redis.asyncio`；会话仓库必须配置独立 32 字节 AES-GCM 记录密钥。
+官方客户端固定访问 `/sc/v1/*`。如果修改 `Config.prefix`，必须由外部路由继续暴露
+`/sc/v1/message`，否则无法与官方客户端互操作；信封认证 path 始终是固定入口。
 
 ## 扩展接口
 
@@ -55,6 +60,9 @@ Python 使用 `typing.Protocol` 定义与 Spring/Go 对等的接口：
 | `LogicalRouteAuthorizer` | 授权规范化 method/path |
 | `SessionRecordProtector` | 加密共享状态中的会话密钥材料 |
 | `AlgorithmProvider` / `SecurityPolicy` | 扩展套件和策略 |
+
+现有握手和全部客户端固定为国际套件。算法 Protocol 只是消息层扩展边界，不能通过
+单独注入对象启用另一套端到端 suite。
 
 业务应用可以从 ASGI `scope["sc.transportTrust"]` 和 `scope["sc.sessionId"]` 读取
 认证上下文。
@@ -89,7 +97,7 @@ tokens = RedisEnrollmentTokens(redis, "sc:v1:enrollment")
 
 ```bash
 uvicorn demo.app:app --host 127.0.0.1 --port 6789
-pytest
+python -m pytest
 python -m build
 ```
 

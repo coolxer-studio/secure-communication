@@ -1,4 +1,4 @@
-# Secure Communication Spring Boot Starter 1.0
+# Secure Communication Spring Boot Starter 1.1-SNAPSHOT
 
 Starter 为 Servlet 应用提供协议 v1 握手、请求解密、逻辑路由授权、请求包装、响应
 加密、会话仓库和重放保护。项目总览见[根 README](../../../README.md)。
@@ -9,7 +9,7 @@ Starter 为 Servlet 应用提供协议 v1 握手、请求解密、逻辑路由�
 <dependency>
   <groupId>com.coolxer.securecommunication</groupId>
   <artifactId>secure-communication-spring-boot-starter</artifactId>
-  <version>1.0.0</version>
+  <version>1.1.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -60,6 +60,8 @@ Base64URL 膨胀；`max-envelope-bytes` 再包含 AEAD 密文和外层信封。�
 
 `spring.sc.enabled` 默认是 `false`。启用后，消息过滤器注册顺序为 `-200`，固定
 处理配置的 `/sc/v1/message`；握手 Controller 固定处理另外两个握手入口。
+官方客户端始终请求 `/sc/v1/message`，信封中的认证 path 也固定为该值。因此除非网关
+继续对外暴露固定入口并完成内部映射，否则不要修改 `prefix`。
 
 ## 3. 提供宿主 Bean
 
@@ -77,6 +79,9 @@ Starter 默认失败关闭。只设置 `spring.sc.enabled=true` 不能形成可�
 | `HandshakeAuthorizer` | 校验 appId、deviceType、H5 Origin 和业务准入条件 |
 | `LogicalRouteAuthorizer` | 只允许必要的 method 与规范化逻辑 path |
 | `SessionRecordProtector` | 加密写入 Redis 的会话密钥材料 |
+
+Starter 还提供消息层 `AlgorithmProvider` 扩展边界，但现有握手和全部客户端固定为
+国际套件；不能通过新增 Provider Bean 单独启用另一套端到端 suite。
 
 Starter 提供 P-256、AES-GCM 及 Redis 基础实现，宿主负责创建 Bean：
 

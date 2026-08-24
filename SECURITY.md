@@ -4,7 +4,7 @@
 
 | Protocol | Support | Security status |
 | --- | --- | --- |
-| `sc/v1` | Supported in SDK 1.0 | Authenticated application encryption; HTTP and HTTPS supported |
+| `sc/v1` | Supported | Authenticated application encryption; HTTP and HTTPS supported |
 | Historical standard/reserve/H5 channels | Unsupported | Removed; must not be exposed or used as a downgrade path |
 
 All Spring Boot, Go, and Python server SDKs and all client SDKs implement the
@@ -42,10 +42,14 @@ for a client release.
 - `sc/v1` requires an authenticated-encryption suite and atomic replay protection.
 - Long-term server keys belong in KMS/HSM-backed providers, not configuration
   files or source control.
+- Client identity protection is platform-specific: WebCrypto and Android 23+
+  use non-exportable keys; Android 21-22 wraps a software P-256 key; iOS stores
+  raw P-256 key material in Keychain by default; Java and Go file stores contain
+  exportable PKCS#8 keys protected by private-directory permissions.
 - Request/response bodies, keys, nonces, complete ciphertext, and identity
   tokens must never be logged.
 - Protocol downgrade and historical compatibility endpoints are forbidden in
-  SDK 1.0 deployments.
+  protocol v1 deployments.
 
 See [the threat model](docs/security/威胁模型.md) and
 [the v1 protocol specification](docs/protocol/协议v1.md). Operational setup and

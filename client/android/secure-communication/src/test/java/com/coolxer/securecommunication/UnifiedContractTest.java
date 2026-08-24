@@ -6,9 +6,20 @@ import java.util.Collections;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
+import okhttp3.HttpUrl;
 
 public class UnifiedContractTest {
+    @Test public void businessTransportMatchesBaseUrlScheme() {
+        assertFalse(SecureCommunicationClient.connectionSpecs(
+                HttpUrl.parse("http://192.0.2.10:8080")).get(0).isTls());
+        assertTrue(SecureCommunicationClient.connectionSpecs(
+                HttpUrl.parse("https://example.test")).get(0).isTls());
+    }
+
     @Test public void requestUsesContractDefaultsAndDefensiveBodyCopies() {
         SecureRequest request = new SecureRequest("/health");
         assertEquals("GET", request.getMethod());

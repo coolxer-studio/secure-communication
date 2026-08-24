@@ -1,133 +1,137 @@
-# Secure Communication SDK 1.0
+# Secure Communication SDK
 
-Secure Communication SDK 为已有 HTTP 业务增加一层应用层安全通信能力。业务仍使用
-原来的 Controller、请求模型和幂等逻辑，客户端把逻辑 method、path、受保护 header
-和 body 封装到加密信封中，服务端完成握手、身份确认、解密、路由授权和响应加密。
+Secure Communication SDK 为已有 HTTP 业务增加应用层安全通信能力。客户端把逻辑
+method、path、受保护 header 和 body 放入加密信封；服务端完成身份握手、解密、重放
+检查、逻辑路由授权和响应加密。业务 Controller、请求模型和幂等语义可以继续复用。
 
-SDK 同时支持 HTTP 和 HTTPS，传输协议由宿主企业选择；生产环境仍建议使用 TLS 1.2
-或更高版本。应用层协议独立提供服务端身份固定、安装身份持有证明、会话密钥协商、
-业务载荷机密性、完整性和重放保护，但不隐藏目标地址、流量大小与时序。
+当前线协议为 **protocol v1**，密码套件为
+`P256_HKDF_SHA256_AES256_GCM`。protocol v1 可以运行在 HTTP 或 HTTPS 上；生产环境仍
+建议使用 TLS 1.2 或更高版本。应用层协议不隐藏目标地址、流量大小、时序以及未纳入
+信封的传输元数据。
 
-## 解决什么问题
+> 本仓库没有 Git tag。下表中的版本来自当前源码 manifest 或 module path，只说明源码
+> 状态，不代表对应制品已发布到 npm、Maven、PyPI 或其他公共仓库。
 
-直接在各业务端分别实现加密、验签和防重放，容易出现算法、字段和错误处理不一致，
-也会把安全逻辑散落到业务代码中。本 SDK 提供统一协议和多端实现，重点解决：
+## 当前源码版本
 
-- 防止 HTTP 业务字段、内部路由和受保护 header 以明文出现在应用层报文中；
-- 检测密文、元数据和响应被篡改；
-- 使用时间戳、会话序号和滑动窗口拒绝过期或重复请求；
-- 通过服务端公钥固定和客户端安装私钥持有证明确认通信端身份；
-- 只允许解密后的请求进入宿主配置的逻辑路由白名单；
-- 让业务继续维护自己的 message ID、batch ID、顺序和幂等语义。
+| 平台 | 当前源码声明 | 适用场景 | 接入文档 |
+| --- | --- | --- | --- |
+| Spring Boot | `secure-communication-spring-boot-starter:1.1.0-SNAPSHOT` | Servlet 服务端 | [Spring Boot](server/spring-boot/README.md) |
+| Go Server | module `github.com/coolxer/secure-communication-server-go`，未声明发布版本 | `net/http` 服务端 | [Go Server](server/go/README.md) |
+| Python Server | `secure-communication-server` `1.0.0` | FastAPI / ASGI 服务端 | [Python Server](server/python/README.md) |
+| JavaScript | `@coolxer/secure-communication-js` `2.0.0` | Web / H5 | [JavaScript](client/javascript/README.md) |
+| Go Client | module `github.com/coolxer/secure-communication-go/v2`，未提供 tag | Host / Server / Emulator | [Go](client/go/README.md) |
+| Java | `secure-communication-java:1.1.0-SNAPSHOT` | Java Host / Server / Emulator | [Java](client/java/README.md) |
+| Android | `secure-communication` `2.0.0` | Android Agent | [Android](client/android/README.md) |
+| iOS | Swift Package `SecureCommunication`，Package.swift 未声明版本 | iOS 13+ / macOS 11+ | [iOS](client/ios/README.md) |
 
-## 1.0 能力与边界
+客户端 API 版本和线协议版本彼此独立：JavaScript、Go、Android、iOS 使用统一的 2.x
+高层接口语义，Java 当前为 1.1；它们在线上仍交换 protocol v1 信封。
 
-当前协议版本为 v1，首发密码套件固定为
-`P256_HKDF_SHA256_AES256_GCM`：P-256 用于身份签名和临时 ECDH，HKDF-SHA256
-派生会话材料，AES-256-GCM 保护请求和响应。
+## 最短接入路径
 
-1.0 已提供：
+1. 选择 Spring Boot、Go 或 Python 服务端实现。
+2. 配置 P-256 服务端身份、会话、重放、安装注册、握手授权和逻辑路由白名单。
+3. 通过可信构建或配置渠道把服务端 `keyId` 和公开 SPKI 信任锚交付给客户端。
+4. H5 通过精确 Origin 白名单准入，不调用 `enroll`；其他新安装取得短时、单次注册
+   令牌并调用 `enroll(token)`。
+5. 调用 `initialize` 建立会话，或直接调用会按需初始化的 `request(SecureRequest)`。
+6. 长期复用客户端实例；只在主动失效或会话错误后调用 `closeSession`。
 
-- 固定的握手、握手确认和消息入口；
-- 服务端身份信任锚固定及安装身份注册；
-- 每个会话独立的双向密钥、nonce 前缀和传输序号；
-- 请求与响应加密、完整性校验、时效校验和重放保护；
-- Spring Boot、Go `net/http`、Python ASGI 服务端的逻辑路由白名单、请求重写和响应加密；
-- JavaScript、Go、标准 Java、Android、iOS 客户端及统一生命周期接口；
-- Redis 会话、注册、重放保护和会话记录加密扩展点。
+以下 JavaScript 示例展示统一请求模型。源码消费和各平台安装方法见对应 README：
 
-以下能力不属于 1.0：旧协议兼容或自动降级、TCP/UDP/WebSocket 适配、动态协议
-变形、流量伪装、URL 混淆、客户端防逆向和安全策略热更新。国密套件目前只保留
-Provider 扩展边界，接入经审计实现前不得启用。
+```js
+import {
+  SecureRequest,
+  createSecureClient
+} from '@coolxer/secure-communication-js';
 
-## 架构
+const client = createSecureClient({
+  baseUrl: 'https://api.example.com',
+  appId: 'my-web',
+  deviceType: 'H5',
+  serverTrustAnchors: {
+    'server-key-2026': '<P-256 SPKI Base64URL>'
+  }
+});
 
-```mermaid
-flowchart LR
-    Web["Web / H5"] --> Client["Secure Client v1"]
-    Host["Host / Emulator"] --> Client
-    Mobile["Android / iOS"] --> Client
-    Client -->|"HTTP(S) / 加密信封"| Endpoints["/sc/v1/*"]
-    Endpoints --> Server["Spring / Go / Python Server"]
-    Server -->|"解密后的逻辑请求"| Routes["逻辑路由白名单"]
-    Routes --> Controllers["现有 Controller / Service"]
-    Controllers -->|"业务响应"| Starter
-    Starter -->|"加密响应"| Client
-    Server --- State["Redis 会话 / 重放 / 注册状态"]
-    Server --- Identity["服务端身份密钥 / KMS"]
+const response = await client.request(new SecureRequest({
+  method: 'POST',
+  logicalPath: '/orders/query',
+  contentType: 'application/json',
+  protectedHeaders: { code: 'business-code' },
+  body: JSON.stringify({ orderId: '10001' })
+}));
+
+const result = response.json();
 ```
 
-外层协议入口固定为：
+统一客户端生命周期为 `enroll`、`initialize`、`request` 和 `closeSession`。配置、请求、
+响应和错误字段见[客户端接口契约](docs/客户端接口契约.md)。
+
+## 协议与安全边界
+
+外层入口固定为：
 
 - `POST /sc/v1/handshake`
 - `POST /sc/v1/handshake/finish`
 - `POST /sc/v1/message`
 
-原始业务 path 不直接暴露为安全入口，而是作为密文中的逻辑路由。宿主必须明确
-授权允许访问的逻辑路由。
+官方客户端固定访问这些路径。服务端虽然提供消息 `prefix` 配置，但若没有网关映射，
+改变对外消息路径会使官方客户端无法互操作；外层信封中的认证路径仍固定为
+`/sc/v1/message`。
 
-## 交付物
+SDK 提供：
 
-| 平台 | 交付物 | 适用场景 | 接入文档 |
-| --- | --- | --- | --- |
-| Spring Boot | `com.coolxer.securecommunication:secure-communication-spring-boot-starter:1.1.0-SNAPSHOT` | 服务端安全接入层 | [Spring Boot](server/spring-boot/README.md) |
-| Go Server | `github.com/coolxer/secure-communication-server-go` | `net/http` 服务端安全接入层 | [Go Server](server/go/README.md) |
-| Python Server | `secure-communication-server` | FastAPI / ASGI 服务端安全接入层 | [Python Server](server/python/README.md) |
-| JavaScript | `@coolxer/secure-communication-js@2.0.0` | Web / H5 | [JavaScript](client/javascript/README.md) |
-| Go | `github.com/coolxer/secure-communication-go/v2` | Host / Server / Emulator | [Go](client/go/README.md) |
-| Java | `com.coolxer.securecommunication:secure-communication-java:1.1.0-SNAPSHOT` | Java Host / Server / Emulator | [Java](client/java/README.md) |
-| Android | `com.coolxer.securecommunication:secure-communication:2.0.0` | Android Agent | [Android](client/android/README.md) |
-| iOS | Swift Package `SecureCommunication` 2.0.0 | iOS Agent | [iOS](client/ios/README.md) |
+- P-256 服务端身份固定和安装身份持有证明；
+- P-256 ECDH、HKDF-SHA256 和方向隔离的 AES-256-GCM 会话；
+- 时间戳、会话序号和原子重放保护；
+- 加密后的逻辑 method、path、业务 header 和 body；
+- Spring Boot、Go 和 Python 服务端逻辑路由白名单；
+- 内存开发实现与 Redis 生产扩展。
 
-客户端统一提供 `initialize`、`enroll`、`request` 和 `closeSession` 生命周期，公共
-模型和各语言执行上下文映射见[客户端接口契约](docs/客户端接口契约.md)。H5
-通过 Origin 准入、服务端信任锚和不可导出的 WebCrypto 安装密钥建立身份，不调用
-`enroll`；Host、Server、Emulator、Android 和 iOS 首次安装必须使用短时、单次注册令牌。
+当前客户端只接通国际套件。`SM2_SM3_SM4_GCM` 只是服务端 Provider 扩展标识，仓库中
+未交付可启用的国密协议实现；未导出、未接入公共运行时的辅助源码也不构成受支持能力。
 
-## 推荐接入顺序
+SDK 不提供旧协议降级、TCP/UDP/WebSocket 适配、流量伪装、URL 混淆、客户端防逆向、
+业务权限控制或业务幂等。原明文业务入口必须在网关、网络或应用边界被阻断。
 
-1. 生成 P-256 服务端身份密钥，为私钥选择环境变量、密钥文件或 KMS 加载方式。
-2. 选择 Spring Boot、Go 或 Python 服务端 SDK，实现身份、授权、会话、重放和注册等 SPI。
-3. 配置允许访问的逻辑路由、Redis 独立命名空间、请求大小和 CORS。
-4. 通过独立可信渠道把服务端 `keyId` 和公开 SPKI 信任锚分发给全部客户端。
-5. 原生端或 Host 使用一次性令牌完成首次注册，H5 通过 Origin 策略准入。
-6. 调用 `initialize` 建立会话，再用 `request` 替代原业务 HTTP 发送入口。
-7. 使用统一测试向量验证各端，并完成篡改、重放、过期、超限和密钥轮换测试。
+## 请求、会话与重试
 
-SDK 不自动重试业务 POST。调用方重试时必须重新调用 `request`，由 SDK 使用新的
-传输序号和 request ID 重新加密，同时保留原业务 message ID、batch ID 和幂等标识。
+`requestId` 是协议传输关联 ID，不替代业务 message ID、batch ID 或幂等键。SDK 不自动
+重试业务请求。发生网络失败或 `SC_UNKNOWN_SESSION` 后，调用方必须根据业务幂等语义
+决定是否重新调用 `request`；新的调用会使用新序号、新 nonce 和新 request ID，不能
+缓存并原样重放旧密文。
+
+客户端统一暴露 `SecureError.code`、HTTP status、可选 trace ID 和底层 cause。没有收到
+HTTP 响应时，Java、Go、Android 和 iOS 使用 `0` 表示缺失的 HTTP status；JavaScript
+对应字段为未定义。完整协议错误见[协议错误码](docs/protocol/协议错误码.md)。
 
 ## 文档导航
 
-- [文档中心](docs/文档中心.md)：架构、协议、安全、兼容性和各 SDK 导航；
-- [完整接入与调试指南](docs/接入与调试指南.md)：跨端配置、密钥生成、本地联调、错误排查和上线清单；
-- [客户端接口契约](docs/客户端接口契约.md)：跨端配置、生命周期、模型、错误和执行上下文；
-- [客户端 2.0 迁移指南](docs/客户端2.0迁移指南.md)：破坏性 API、版本和身份重新注册迁移；
-- [协议 v1 规范](docs/protocol/协议v1.md)：握手、信封、AAD、路由、重试和错误语义；
-- [协议错误码](docs/protocol/协议错误码.md)：统一 HTTP 状态、错误分类与重试策略；
-- [Security Policy](SECURITY.md)：受支持版本、漏洞报告和生产部署要求；
-- [Changelog](CHANGELOG.md)：版本变更记录；
-- [Spring Boot Starter](server/spring-boot/spring-boot-starter-sc/README.MD)：服务端最小接入；
-- [Go Server SDK](server/go/README.md)：`net/http`、Redis、扩展接口与 Demo；
-- [Python Server SDK](server/python/README.md)：FastAPI/ASGI、异步 Redis 与 Demo；
-- [Spring Boot Demo](server/spring-boot/SpringBootDemo/README.md)：示例工程运行边界；
-- [Android Demo](client/android/app/README.md)：Android 示例壳工程说明。
+- [文档中心](docs/文档中心.md)
+- [完整接入与调试指南](docs/接入与调试指南.md)
+- [客户端接口契约](docs/客户端接口契约.md)
+- [客户端 2.0 迁移指南](docs/客户端2.0迁移指南.md)
+- [协议 v1 规范](docs/protocol/协议v1.md)
+- [协议错误码](docs/protocol/协议错误码.md)
+- [兼容性策略](docs/兼容性策略.md)
+- [威胁模型](docs/security/威胁模型.md)
+- [Security Policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
 ## 源码验证
 
 ```bash
-cd server/spring-boot/spring-boot-starter-sc && mvn test
-cd server/go && go test ./...
-cd server/python && pytest && python -m build
 cd client/javascript && npm ci && npm test
 cd client/go && go test ./...
 cd client/java && mvn test package
-cd client/android && ./gradlew :secure-communication:test
+cd client/android && ./gradlew :secure-communication:testDebugUnitTest :secure-communication:assembleRelease
 cd client/ios && swift test
+cd server/spring-boot/spring-boot-starter-sc && mvn test
+cd server/go && go test ./...
+cd server/python && python -m pytest && python -m build
 ```
 
-## 后续路线
-
-后续版本可在协议评审和安全审计后增加国密 Provider、密钥与策略轮换、集中化安全
-观测和更多受控传输适配。动态协议变形、流量伪装等能力如进入实现，必须作为独立
-版本设计和验证，不能被视为当前 1.0 的安全保证。
+部分命令需要预先安装平台 SDK、测试依赖或允许本地测试进程监听端口。测试向量位于
+[`protocol/test-vectors`](protocol/test-vectors/)。

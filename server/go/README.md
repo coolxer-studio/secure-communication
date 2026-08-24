@@ -1,4 +1,4 @@
-# Secure Communication Go Server 1.0
+# Secure Communication Go Server（protocol v1）
 
 本目录是协议 v1 的 Go 服务端实现，结构对应 Spring Boot 的 Starter 与 Demo：根包提供协议与 SPI，`httpadapter` 提供 `net/http` 接入，`redisstore` 提供生产状态实现，`cmd/demo` 是最小宿主。
 
@@ -17,8 +17,12 @@
 - 支持 HTTP 和 HTTPS，生产入口建议使用 TLS 1.2+；
 - 集群部署使用 Redis，并用 32 字节记录密钥加密会话材料。
 
+`go.mod` 声明 module `github.com/coolxer/secure-communication-server-go`，但不包含源码
+版本且当前仓库没有 `v1.0.0` tag。从本地源码接入消费项目：
+
 ```bash
-go get github.com/coolxer/secure-communication-server-go@v1.0.0
+go mod edit -require=github.com/coolxer/secure-communication-server-go@v0.0.0
+go mod edit -replace=github.com/coolxer/secure-communication-server-go=/absolute/path/to/secure-communication/server/go
 ```
 
 ## 最小接入
@@ -38,6 +42,8 @@ handler := httpadapter.New(config, handshakes, messages, routeAuthorizer, busine
 ```
 
 必须显式提供服务端身份、握手授权、注册令牌和精确逻辑路由白名单。默认拒绝实现保持失败关闭。外层入口固定为 `/sc/v1/handshake`、`/sc/v1/handshake/finish` 和 `/sc/v1/message`。
+官方客户端固定访问这些入口；若修改 `Config.Prefix`，必须由外部路由继续暴露固定
+消息入口，否则无法与官方客户端互操作。
 
 ## 扩展接口
 
@@ -52,6 +58,9 @@ handler := httpadapter.New(config, handshakes, messages, routeAuthorizer, busine
 | `LogicalRouteAuthorizer` | 只允许必要的 method 与规范化逻辑 path |
 | `SessionRecordProtector` | 对写入共享状态的会话密钥材料二次加密 |
 | `AlgorithmProvider` / `SecurityPolicy` | 扩展经过审计的套件或宿主安全策略 |
+
+现有握手和全部客户端固定为国际套件。`AlgorithmProvider` 只是消息层扩展边界，不能
+通过单独注册实现启用另一套端到端 suite。
 
 `HandshakeAuthorizerFunc` 与 `LogicalRouteAuthorizerFunc` 可直接包装函数。业务 Handler
 可以通过 `httpadapter.TransportTrustFrom(request.Context())` 读取认证后的套件和 sid。

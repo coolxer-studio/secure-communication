@@ -15,6 +15,7 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 import okhttp3.TlsVersion;
 import java.util.Collections;
+import java.util.List;
 
 final class SecureCommunicationClient {
     private final HttpUrl baseUrl;
@@ -30,14 +31,21 @@ final class SecureCommunicationClient {
         if (endpoint == null) {
             throw new IllegalArgumentException("Unable to resolve v1 message endpoint");
         }
-        ConnectionSpec tls13 = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-                .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3)
-                .build();
         this.httpClient = hostClient.newBuilder()
                 .addInterceptor(new SecureCommunicationInterceptor(endpoint, codec))
                 .retryOnConnectionFailure(false)
-                .connectionSpecs(Collections.singletonList(tls13))
+                .connectionSpecs(connectionSpecs(baseUrl))
                 .build();
+    }
+
+    static List<ConnectionSpec> connectionSpecs(HttpUrl baseUrl) {
+        if ("http".equals(baseUrl.scheme())) {
+            return Collections.singletonList(ConnectionSpec.CLEARTEXT);
+        }
+        ConnectionSpec tls = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
+                .tlsVersions(TlsVersion.TLS_1_2, TlsVersion.TLS_1_3)
+                .build();
+        return Collections.singletonList(tls);
     }
 
     Call newCall(SecureRequest request) {

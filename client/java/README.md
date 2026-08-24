@@ -4,6 +4,9 @@
 服务端身份固定、P-256 握手、HKDF-SHA256、AES-256-GCM、严格响应验证和线程安全
 会话序号。Android 应继续使用独立的 Android AAR。
 
+`pom.xml` 当前声明 `1.1.0-SNAPSHOT`。该声明只代表源码版本，不证明制品已发布到公共
+Maven 仓库。
+
 ## Maven 依赖
 
 ```xml
@@ -118,6 +121,7 @@ try {
 日志不得记录正文、注册令牌、私钥、会话材料或完整信封。收到
 `SC_UNKNOWN_SESSION` 时调用 `closeSession` 后重新握手，再由业务依据幂等语义决定
 是否重发。重发必须重新调用 `request`，不能缓存并原样发送旧密文。
+未收到 HTTP 响应时 `SecureError.getHttpStatus()` 返回 `0`。
 
 ## 构建验证
 
